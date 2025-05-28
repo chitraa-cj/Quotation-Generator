@@ -10,7 +10,7 @@ import json
 import io
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import Chroma
 import numpy as np
 import re
 
@@ -55,7 +55,7 @@ def create_vector_store(documents):
         texts.extend(text_splitter.split_text(doc['output_text']))
     
     embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    vector_store = FAISS.from_texts(texts, embeddings)
+    vector_store = Chroma.from_texts(texts, embeddings)
     return vector_store
 
 def find_similar_examples(query, k=3):
