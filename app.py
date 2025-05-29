@@ -37,6 +37,8 @@ if 'show_example_overlay' not in st.session_state:
     st.session_state.show_example_overlay = False
 if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
+if 'template' not in st.session_state:
+    st.session_state.template = None
 
 def initialize_model():
     model = genai.GenerativeModel('gemini-2.0-flash')
@@ -81,7 +83,7 @@ def process_documents_with_gemini(documents):
     
     return processed_files
 
-def generate_quotation_prompt(examples, input_docs_text, similar_examples=None):
+def generate_quotation_prompt(examples, input_docs_text, similar_examples=None, template=None):
     # Format examples
     examples_text = ""
     for i, example in enumerate(examples, 1):
@@ -96,7 +98,55 @@ def generate_quotation_prompt(examples, input_docs_text, similar_examples=None):
         for i, example in enumerate(similar_examples, 1):
             similar_examples_text += f"\nSimilar Example {i}:\n{example.page_content}\n"
     
-    return f"""You are a smart proposal quotation document creator. I will provide you with examples and new input documents.
+    # Chain of thought reasoning prompt
+    chain_of_thought = """
+Follow these steps carefully:
+
+1. Template Analysis:
+   - Identify all placeholders in the template
+   - Understand the structure and formatting requirements
+   - Note any specific sections or categories needed
+
+2. Content Extraction:
+   - Extract relevant information from input documents
+   - Match extracted information to template placeholders
+   - Identify any missing information that needs to be inferred
+
+3. Validation:
+   - Ensure all required sections are present
+   - Verify that all placeholders are filled
+   - Check for consistency in formatting and style
+   - Validate numerical calculations and units
+
+4. Final Review:
+   - Cross-reference with example quotations
+   - Ensure all pricing follows established patterns
+   - Verify source references are accurate
+   - Check for any missing or incomplete information
+"""
+
+    json_structure = '''{
+    "sections": [
+        {
+            "name": "AV Equipment",
+            "items": [
+                {
+                    "description": "string",
+                    "quantity": number,
+                    "unit_price": number,
+                    "total_price": number,
+                    "source": {
+                        "document": "string",
+                        "line_reference": "string"
+                    }
+                }
+            ]
+        }
+    ],
+    "total_amount": number
+}'''
+    
+    prompt = f"""You are a smart proposal quotation document creator. I will provide you with examples and new input documents.
     
 Previous Examples:
 {examples_text}
@@ -105,6 +155,8 @@ Previous Examples:
 
 New Input Documents:
 {input_docs_text}
+
+{chain_of_thought}
 
 Please analyze both the examples and new input documents to create a detailed quotation that follows the same style and structure as the examples, but with content specific to the new input.
 
@@ -119,27 +171,14 @@ For each section, provide:
 - Quantity
 - Unit price
 - Total price
+- Source reference (which document and line number the item was derived from)
 
 Format the response as a JSON object with the following structure:
-{{
-    "sections": [
-        {{
-            "name": "AV Equipment",
-            "items": [
-                {{
-                    "description": "string",
-                    "quantity": number,
-                    "unit_price": number,
-                    "total_price": number
-                }}
-            ]
-        }},
-        // Similar structure for other sections
-    ],
-    "total_amount": number
-}}
+{json_structure}
 
-Ensure all prices are in USD and include appropriate units for quantities. Follow the pricing patterns and item categorization from the examples while adapting to the specific requirements in the new input documents."""
+Ensure all prices are in USD and include appropriate units for quantities. Follow the pricing patterns and item categorization from the examples while adapting to the specific requirements in the new input documents. For each item, include a reference to the source document and line number where the information was derived from."""
+    
+    return prompt
 
 def create_excel_from_quotation(quotation_data):
     # Create a DataFrame for each section
@@ -147,13 +186,15 @@ def create_excel_from_quotation(quotation_data):
     for section in quotation_data['sections']:
         df = pd.DataFrame(section['items'])
         df['Section'] = section['name']
+        # Add source information
+        df['Source'] = df.apply(lambda row: f"{row['source']['document']} (Line: {row['source']['line_reference']})", axis=1)
         dfs.append(df)
     
     # Combine all sections
     final_df = pd.concat(dfs, ignore_index=True)
     
     # Reorder columns
-    final_df = final_df[['Section', 'description', 'quantity', 'unit_price', 'total_price']]
+    final_df = final_df[['Section', 'description', 'quantity', 'unit_price', 'total_price', 'Source']]
     
     # Add total row
     total_row = pd.DataFrame({
@@ -161,7 +202,8 @@ def create_excel_from_quotation(quotation_data):
         'description': [''],
         'quantity': [''],
         'unit_price': [''],
-        'total_price': [quotation_data['total_amount']]
+        'total_price': [quotation_data['total_amount']],
+        'Source': ['']
     })
     final_df = pd.concat([final_df, total_row], ignore_index=True)
     
@@ -195,6 +237,42 @@ def display_examples():
 
 def main():
     st.title("Quotation Generator")
+    
+    # Template settings in sidebar
+    st.sidebar.header("Template Settings")
+    template_mode = st.sidebar.radio(
+        "Select Template Mode",
+        ["Default Template", "Custom Template"]
+    )
+    
+    if template_mode == "Custom Template":
+        st.session_state.template = st.sidebar.text_area(
+            "Enter your template (use placeholders like [COMPANY_NAME], [PROJECT_DETAILS], etc.)",
+            height=200
+        )
+    else:
+        st.session_state.template = """[COMPANY_NAME]
+[ADDRESS]
+[CONTACT_INFO]
+
+QUOTATION
+
+Date: [DATE]
+Quotation #: [QUOTE_NUMBER]
+
+Dear [CLIENT_NAME],
+
+Thank you for your interest in our services. Please find below our quotation for [PROJECT_NAME]:
+
+[PROJECT_DETAILS]
+
+Total Amount: [AMOUNT]
+Payment Terms: [PAYMENT_TERMS]
+Validity: [VALIDITY_PERIOD]
+
+Best regards,
+[YOUR_NAME]
+[YOUR_POSITION]"""
     
     # Main chat interface container
     chat_container = st.container()
@@ -308,7 +386,8 @@ def main():
                 prompt = generate_quotation_prompt(
                     relevant_examples,
                     combined_input,
-                    similar_examples
+                    similar_examples,
+                    st.session_state.template
                 )
                 response = model.generate_content(prompt)
                 try:
