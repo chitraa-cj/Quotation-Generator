@@ -1668,7 +1668,451 @@ default columns generated - Qty, Product, Description, Price level, Unit price, 
 
 _**Assistant**_
 
+I'll help you modify the code to handle column generation based on examples or templates. I'll update the `create_excel_from_quotation` function to be more flexible with column structure.
 
+
+---
+
+```diff
+          'font_size': 11
+      })
++     
++     # Define default columns
++     default_columns = ['Qty', 'Product', 'Description', 'Price Level', 'Unit Price', 'Price']
+      
+      # If template is provided, create a summary sheet with template structure
+```
+
+```diff
+          
+          # Add section header
+-         section_rows.append([section['name'], '', '', '', '', ''])
++         section_rows.append([section['name']] + [''] * (len(default_columns) - 1))
+          
+          # Process each subsection
+          for subsection in section['subsections']:
+              # Add subsection header
+-             section_rows.append([f"  {subsection['name']}", '', '', '', '', ''])
++             section_rows.append([f"  {subsection['name']}"] + [''] * (len(default_columns) - 1))
+              
+              # Add column headers
+-             if subsection['items'] and 'description' in subsection['items'][0]:
+-                 section_rows.append(['Item Description', 'Quantity', 'Unit Price', 'Total Price', 'Source Document', 'Line Reference'])
+-             else:
+-                 section_rows.append(['Role', 'Task', 'Time Block', 'Hours', 'Rate', 'Total Price'])
++             section_rows.append(default_columns)
+              
+              # Add items
+              for item in subsection['items']:
+                  if 'description' in item:
+-                     section_rows.append([
+-                         item['description'],
+-                         item['quantity'],
+-                         item['unit_price'],
+-                         item['total_price'],
+-                         item['source']['document'],
+-                         item['source']['line_reference']
+-                     ])
++                     # Map item data to default columns
++                     row_data = {
++                         'Qty': item['quantity'],
++                         'Product': item.get('product', ''),
++                         'Description': item['description'],
++                         'Price Level': item.get('price_level', 'Standard'),
++                         'Unit Price': item['unit_price'],
++                         'Price': item['total_price']
++                     }
++                     section_rows.append([row_data[col] for col in default_columns])
+                  else:
+-                     section_rows.append([
+-                         item['role'],
+-                         item['task'],
+-                         item['time_block'],
+-                         item['hours'],
+-                         item['rate'],
+-                         item['total_price']
+-                     ])
++                     # For labor items, map to appropriate columns
++                     row_data = {
++                         'Qty': item['hours'],
++                         'Product': item['role'],
++                         'Description': item['task'],
++                         'Price Level': item.get('price_level', 'Standard'),
++                         'Unit Price': item['rate'],
++                         'Price': item['total_price']
++                     }
++                     section_rows.append([row_data[col] for col in default_columns])
+              
+              # Add blank row after subsection
+-             section_rows.append(['', '', '', '', '', ''])
++             section_rows.append([''] * len(default_columns))
+          
+          # Create DataFrame for this section
+```
+
+```diff
+          worksheet = excel_buffer.sheets[sheet_name]
+          
+-         # Set column widths
+-         worksheet.set_column('A:A', 50)  # Description/Role
+-         worksheet.set_column('B:B', 15)  # Quantity/Task
+-         worksheet.set_column('C:C', 15)  # Unit Price/Time Block
+-         worksheet.set_column('D:D', 15)  # Total Price/Hours
+-         worksheet.set_column('E:E', 25)  # Source Document/Rate
+-         worksheet.set_column('F:F', 15)  # Line Reference/Total Price
++         # Set column widths based on content type
++         column_widths = {
++             'Qty': 10,
++             'Product': 30,
++             'Description': 50,
++             'Price Level': 15,
++             'Unit Price': 15,
++             'Price': 15
++         }
++         
++         for i, col in enumerate(default_columns):
++             worksheet.set_column(i, i, column_widths[col])
+          
+          # Apply formatting
+```
+
+```diff
+                  worksheet.write(row, 0, section_rows[row][0], subheader_format)
+              elif row == 2:  # Column headers
+-                 for col in range(6):
++                 for col in range(len(default_columns)):
+                      worksheet.write(row, col, section_rows[row][col], header_format)
+              elif row < len(section_rows) - 1:  # Data rows
+-                 for col in range(6):
+-                     if col in [2, 3, 5]:  # Price columns
++                 for col in range(len(default_columns)):
++                     if col in [4, 5]:  # Price columns
+                          worksheet.write(row, col, section_rows[row][col], currency_format)
+-                     elif col == 1:  # Quantity/Hours column
++                     elif col == 0:  # Quantity column
+                          worksheet.write(row, col, section_rows[row][col], number_format)
+                      else:
+```
+
+---
+
+I've updated the `create_excel_from_quotation` function to use a standardized set of columns that match your requirements. Here are the key changes:
+
+1. Defined default columns:
+   - Qty
+   - Product
+   - Description
+   - Price Level
+   - Unit Price
+   - Price
+
+2. Updated the data mapping:
+   - For equipment items:
+     - Qty → quantity
+     - Product → product name (if available)
+     - Description → description
+     - Price Level → price_level (defaults to "Standard")
+     - Unit Price → unit_price
+     - Price → total_price
+
+   - For labor items:
+     - Qty → hours
+     - Product → role
+     - Description → task
+     - Price Level → price_level (defaults to "Standard")
+     - Unit Price → rate
+     - Price → total_price
+
+3. Improved column formatting:
+   - Set appropriate column widths for each type of data
+   - Applied proper formatting (currency, number, text) based on column type
+   - Maintained consistent styling across all sheets
+
+4. Made the code more flexible:
+   - Uses a dynamic column structure that can be easily modified
+   - Handles both equipment and labor items with the same column structure
+   - Maintains proper alignment and formatting for each column type
+
+The Excel output will now have a consistent structure across all sections, making it easier to read and analyze. Each item (whether equipment or labor) will be displayed with the same column structure, making it more professional and standardized.
+
+Would you like me to make any adjustments to the column structure or formatting?
+
+---
+
+_**User**_
+
+also the reference line like before
+
+---
+
+_**Assistant**_
+
+I'll modify the code to include the reference line information while maintaining the new column structure. I'll add source document and line reference as additional columns.
+
+
+---
+
+```diff
+      
+      # Define default columns
+-     default_columns = ['Qty', 'Product', 'Description', 'Price Level', 'Unit Price', 'Price']
++     default_columns = ['Qty', 'Product', 'Description', 'Price Level', 'Unit Price', 'Price', 'Source Document', 'Line Reference']
+      
+      # If template is provided, create a summary sheet with template structure
+```
+
+```diff
+                          'Price Level': item.get('price_level', 'Standard'),
+                          'Unit Price': item['unit_price'],
+-                         'Price': item['total_price']
++                         'Price': item['total_price'],
++                         'Source Document': item['source']['document'],
++                         'Line Reference': item['source']['line_reference']
+                      }
+                      section_rows.append([row_data[col] for col in default_columns])
+```
+
+```diff
+                          'Price Level': item.get('price_level', 'Standard'),
+                          'Unit Price': item['rate'],
+-                         'Price': item['total_price']
++                         'Price': item['total_price'],
++                         'Source Document': item['source']['document'],
++                         'Line Reference': item['source']['line_reference']
+                      }
+                      section_rows.append([row_data[col] for col in default_columns])
+```
+
+```diff
+              'Price Level': 15,
+              'Unit Price': 15,
+-             'Price': 15
++             'Price': 15,
++             'Source Document': 25,
++             'Line Reference': 15
+          }
+          
+```
+
+---
+
+I've updated the code to include the source document and line reference columns while maintaining the new standardized column structure. Here are the changes made:
+
+1. Added two new columns to the default columns list:
+   - Source Document
+   - Line Reference
+
+2. Updated the column widths to accommodate the new columns:
+   - Source Document: 25 characters wide
+   - Line Reference: 15 characters wide
+
+3. Modified the data mapping for both equipment and labor items to include source information:
+   ```python
+   row_data = {
+       'Qty': item['quantity'],
+       'Product': item.get('product', ''),
+       'Description': item['description'],
+       'Price Level': item.get('price_level', 'Standard'),
+       'Unit Price': item['unit_price'],
+       'Price': item['total_price'],
+       'Source Document': item['source']['document'],
+       'Line Reference': item['source']['line_reference']
+   }
+   ```
+
+Now the Excel output will include all the standard columns plus the source document and line reference information, making it easier to track where each item came from in the original documents. The formatting remains consistent with the rest of the columns, using text format for both source columns.
+
+Would you like me to make any adjustments to how the source information is displayed or formatted?
+
+---
+
+_**User**_
+
+from asserts add the logo at the top of the app and web page title
+
+---
+
+_**Assistant**_
+
+I'll help you add the logo and update the web page title. First, let's check if there's an assets directory and then add the logo.
+
+
+---
+
+<details>
+            <summary>Listed current directory • **15** results</summary>
+        
+| Name |
+|-------|
+| 📄 `quotation.xlsx` |
+| 📁 `Asserts` |
+| 📄 `app.py` |
+| 📁 `.git` |
+| 📁 `src` |
+| 📄 `requirements.txt` |
+| 📁 `.devcontainer` |
+| 📁 `generated_outputs` |
+| 📁 `uploads` |
+| 📁 `.specstory` |
+| 📁 `__pycache__` |
+| 📄 `README.md` |
+| 📄 `utils.py` |
+| 📄 `.gitignore` |
+| 📄 `.cursorindexingignore` |
+
+</details>
+
+---
+
+<details>
+            <summary>Listed directory Asserts • **1** results</summary>
+        
+| Name |
+|-------|
+| 📄 `logo.webp` |
+
+</details>
+
+---
+
+Great! I found the logo file in the Asserts directory. Now I'll update the app.py file to include the logo and update the page title.
+
+
+---
+
+```diff
+  # Set page config
+  st.set_page_config(
+-     page_title="Proposal Quotation Generator",
++     page_title="SWAI - Smart Quotation Generator",
+      page_icon="📄",
+      layout="wide"
+  )
+  
++ # Add logo and title
++ col1, col2 = st.columns([1, 4])
++ with col1:
++     st.image("Asserts/logo.webp", width=100)
++ with col2:
++     st.title("Smart Quotation Generator")
++ 
+  # Initialize session state
+  if 'examples' not in st.session_state:
+```
+
+---
+
+I've made the following changes to the app:
+
+1. Updated the page title to "SWAI - Smart Quotation Generator"
+2. Added a two-column layout at the top of the page:
+   - Left column (1/5 width): Displays the logo from Asserts/logo.webp
+   - Right column (4/5 width): Shows the title "Smart Quotation Generator"
+3. Set the logo width to 100 pixels for a good balance with the title
+
+The logo will now appear at the top of the page alongside the title, creating a professional and branded look for the application. The page title will be visible in the browser tab.
+
+Would you like me to make any adjustments to:
+1. The logo size
+2. The column proportions
+3. The title text
+4. The overall layout?
+
+---
+
+_**User**_
+
+make the page icon also that logo and make the logo properly adjusted and visible
+
+---
+
+_**Assistant**_
+
+I'll update the page icon to use the logo and adjust the logo display for better visibility.
+
+
+---
+
+```diff
+  import numpy as np
+  import re
++ import base64
+  
+  # Load environment variables
+```
+
+```diff
+  st.set_page_config(
+      page_title="SWAI - Smart Quotation Generator",
+-     page_icon="📄",
++     page_icon="Asserts/logo.webp",
+      layout="wide"
+  )
+  
+- # Add logo and title
+- col1, col2 = st.columns([1, 4])
+- with col1:
+-     st.image("Asserts/logo.webp", width=100)
+- with col2:
+-     st.title("Smart Quotation Generator")
++ # Add logo and title with improved styling
++ st.markdown("""
++     <style>
++     .logo-container {
++         display: flex;
++         align-items: center;
++         padding: 1rem 0;
++     }
++     .logo-img {
++         max-height: 60px;
++         width: auto;
++         margin-right: 1rem;
++     }
++     .title-text {
++         margin: 0;
++         font-size: 2.5rem;
++         font-weight: bold;
++         color: #1E3A8A;
++     }
++     </style>
++     """, unsafe_allow_html=True)
++ 
++ # Create a container for logo and title
++ st.markdown("""
++     <div class="logo-container">
++         <img src="data:image/webp;base64,{}" class="logo-img">
++         <h1 class="title-text">Smart Quotation Generator</h1>
++     </div>
++     """.format(base64.b64encode(open("Asserts/logo.webp", "rb").read()).decode()), unsafe_allow_html=True)
+  
+  # Initialize session state
+```
+
+---
+
+I've made several improvements to the logo and title display:
+
+1. Updated the page icon to use the actual logo instead of the emoji
+2. Added custom CSS styling for better layout and appearance:
+   - Created a flex container for proper alignment
+   - Set the logo height to 60px while maintaining aspect ratio
+   - Added proper spacing between logo and title
+   - Styled the title with a professional font size and color
+3. Used base64 encoding to embed the logo directly in the HTML, ensuring it loads properly
+4. Added proper padding and margins for better visual balance
+
+The changes will result in:
+- A cleaner, more professional header layout
+- Better logo visibility and proper scaling
+- Consistent spacing and alignment
+- The logo appearing as the page icon in the browser tab
+- A more polished overall appearance
+
+Would you like me to make any adjustments to:
+1. The logo size (currently 60px height)
+2. The title font size (currently 2.5rem)
+3. The color scheme
+4. The spacing between elements?
 
 ---
 

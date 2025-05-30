@@ -13,6 +13,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import Chroma
 import numpy as np
 import re
+import base64
 
 # Load environment variables
 load_dotenv()
@@ -23,10 +24,40 @@ genai.configure(api_key=GOOGLE_API_KEY)
 
 # Set page config
 st.set_page_config(
-    page_title="Proposal Quotation Generator",
-    page_icon="📄",
+    page_title="SWAI - Smart Quotation Generator",
+    page_icon="Asserts/logo.webp",
     layout="wide"
 )
+
+# Add logo and title with improved styling
+st.markdown("""
+    <style>
+    .logo-container {
+        display: flex;
+        align-items: center;
+        padding: 1rem 0;
+    }
+    .logo-img {
+        max-height: 60px;
+        width: auto;
+        margin-right: 1rem;
+    }
+    .title-text {
+        margin: 0;
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #FFFFFF;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Create a container for logo and title
+st.markdown("""
+    <div class="logo-container">
+        <img src="data:image/webp;base64,{}" class="logo-img">
+        <h1 class="title-text">Smart Quotation Generator</h1>
+    </div>
+    """.format(base64.b64encode(open("Asserts/logo.webp", "rb").read()).decode()), unsafe_allow_html=True)
 
 # Initialize session state
 if 'examples' not in st.session_state:
@@ -637,7 +668,7 @@ def create_excel_from_quotation(quotation_data, template=None):
     })
     
     # Define default columns
-    default_columns = ['Qty', 'Product', 'Description', 'Price Level', 'Unit Price', 'Price']
+    default_columns = ['Qty', 'Product', 'Description', 'Price Level', 'Unit Price', 'Price', 'Source Document', 'Line Reference']
     
     # If template is provided, create a summary sheet with template structure
     if template:
@@ -718,7 +749,9 @@ def create_excel_from_quotation(quotation_data, template=None):
                         'Description': item['description'],
                         'Price Level': item.get('price_level', 'Standard'),
                         'Unit Price': item['unit_price'],
-                        'Price': item['total_price']
+                        'Price': item['total_price'],
+                        'Source Document': item['source']['document'],
+                        'Line Reference': item['source']['line_reference']
                     }
                     section_rows.append([row_data[col] for col in default_columns])
                 else:
@@ -729,7 +762,9 @@ def create_excel_from_quotation(quotation_data, template=None):
                         'Description': item['task'],
                         'Price Level': item.get('price_level', 'Standard'),
                         'Unit Price': item['rate'],
-                        'Price': item['total_price']
+                        'Price': item['total_price'],
+                        'Source Document': item['source']['document'],
+                        'Line Reference': item['source']['line_reference']
                     }
                     section_rows.append([row_data[col] for col in default_columns])
             
@@ -753,7 +788,9 @@ def create_excel_from_quotation(quotation_data, template=None):
             'Description': 50,
             'Price Level': 15,
             'Unit Price': 15,
-            'Price': 15
+            'Price': 15,
+            'Source Document': 25,
+            'Line Reference': 15
         }
         
         for i, col in enumerate(default_columns):
