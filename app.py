@@ -14,8 +14,6 @@ from langchain_community.vectorstores import Chroma
 import numpy as np
 import re
 import base64
-from typing import List, Dict, Any
-import logging
 
 # Load environment variables
 load_dotenv()
@@ -24,13 +22,9 @@ load_dotenv()
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 genai.configure(api_key=GOOGLE_API_KEY)
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 # Set page config
 st.set_page_config(
-    page_title="Smart Quotation Generator",
+    page_title="SWAI - Smart Quotation Generator",
     page_icon="Asserts/logo.webp",
     layout="wide"
 )
@@ -879,116 +873,8 @@ def display_examples():
                     st.write("Output Text:")
                     st.text_area("", example['output_text'], height=200, key=f"output_text_{i}")
 
-def clean_text(text: str) -> str:
-    """Clean and normalize text from noisy documents"""
-    if not text:
-        return ""
-    
-    # Remove special characters and normalize whitespace
-    text = re.sub(r'[^\w\s.,;:!?$%()-]', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Remove multiple newlines
-    text = re.sub(r'\n\s*\n', '\n', text)
-    
-    # Remove page numbers and headers/footers
-    text = re.sub(r'Page \d+ of \d+', '', text)
-    text = re.sub(r'\d+/\d+', '', text)
-    
-    # Remove email addresses and URLs
-    text = re.sub(r'\S+@\S+', '', text)
-    text = re.sub(r'http\S+', '', text)
-    
-    return text.strip()
-
-def chunk_document(text: str, chunk_size: int = 3000, overlap: int = 300) -> List[str]:
-    """Split large documents into overlapping chunks with optimized defaults"""
-    if not text:
-        return []
-    
-    chunks = []
-    start = 0
-    text_length = len(text)
-    
-    while start < text_length:
-        end = start + chunk_size
-        if end > text_length:
-            end = text_length
-        else:
-            # Try to find a natural break point
-            break_point = text.rfind('.', start, end)
-            if break_point > start + chunk_size // 2:
-                end = break_point + 1
-        
-        chunk = text[start:end]
-        chunks.append(chunk)
-        start = end - overlap
-    
-    return chunks
-
-def summarize_chunk(chunk: str, model) -> str:
-    """Summarize a chunk of text to extract key information"""
-    try:
-        prompt = f"""Extract the key information from this text, focusing on:
-1. Equipment and quantities
-2. Labor requirements
-3. Project specifications
-4. Pricing information
-5. Technical requirements
-
-Text:
-{chunk}
-
-Provide a concise summary that captures all important details:"""
-        
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        logger.error(f"Error summarizing chunk: {e}")
-        return chunk
-
-def process_noisy_document(file_content: bytes, file_name: str, model) -> str:
-    """Process a potentially noisy document with enhanced error handling"""
-    try:
-        # Extract text from file
-        text = extract_text_from_file(file_content, file_name)
-        if not text:
-            raise ValueError("No text could be extracted from the document")
-        
-        # Clean the text
-        cleaned_text = clean_text(text)
-        
-        # If text is too long, chunk and summarize
-        if len(cleaned_text) > 8000:  # Increased threshold for better context
-            chunks = chunk_document(cleaned_text)
-            summaries = []
-            for chunk in chunks:
-                summary = summarize_chunk(chunk, model)
-                summaries.append(summary)
-            return "\n\n".join(summaries)
-        
-        return cleaned_text
-    except Exception as e:
-        logger.error(f"Error processing document {file_name}: {e}")
-        raise
-
-def validate_document_content(text: str) -> bool:
-    """Validate if the document contains useful content"""
-    if not text:
-        return False
-    
-    # Check for minimum content length
-    if len(text) < 50:
-        return False
-    
-    # Check for presence of key terms
-    key_terms = ['equipment', 'labor', 'price', 'cost', 'project', 'specification']
-    has_key_terms = any(term in text.lower() for term in key_terms)
-    
-    return has_key_terms
-
 def main():
-    # st.title("Quotation Generator")
+    st.title("Quotation Generator")
     
     # Template settings in sidebar
     st.sidebar.header("Template Settings")
@@ -1116,144 +1002,113 @@ Best regards,
             key="current_input_uploader_chat"
         )
         if uploaded_files and st.button("Generate Quotation", key="generate_quotation_btn_chat"):
-            with st.spinner("Processing documents..."):
+            with st.spinner("Generating quotation..."):
+                # Process current input files
+                input_texts = []
+                for file in uploaded_files:
+                    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                        tmp_file.write(file.getvalue())
+                        text = extract_text_from_file(tmp_file.name, file.name)
+                        input_texts.append(text)
+                    os.unlink(tmp_file.name)
+                # Find similar examples using RAG
+                combined_input = "\n\n".join(input_texts)
+                similar_examples = find_similar_examples(combined_input) if st.session_state.vector_store else None
+                # Display which examples are being used
+                if similar_examples:
+                    st.info(f"Using the following examples for context: {', '.join([f'Example {i+1}' for i in range(len(similar_examples))])}")
+                # Prepare the actual text of the most relevant examples
+                relevant_examples = []
+                if similar_examples:
+                    for sim in similar_examples:
+                        # Find the original example whose text matches
+                        for ex in st.session_state.examples:
+                            if sim.page_content in ex['input_text'] or sim.page_content in ex['output_text']:
+                                relevant_examples.append(ex)
+                                break
+                else:
+                    relevant_examples = st.session_state.examples
+                # Generate quotation
+                model = initialize_model()
+                prompt = generate_quotation_prompt(
+                    relevant_examples,
+                    combined_input,
+                    similar_examples,
+                    st.session_state.template
+                )
+                response = model.generate_content(prompt)
                 try:
-                    # Initialize model
-                    model = initialize_model()
+                    # Extract and parse the response
+                    quotation_data = extract_json_from_response(response.text)
                     
-                    # Process current input files with enhanced error handling
-                    input_texts = []
-                    for file in uploaded_files:
-                        try:
-                            processed_text = process_noisy_document(file.getvalue(), file.name, model)
-                            if validate_document_content(processed_text):
-                                input_texts.append(processed_text)
-                            else:
-                                st.warning(f"Warning: {file.name} appears to contain insufficient content. It may be skipped.")
-                        except Exception as e:
-                            st.error(f"Error processing {file.name}: {str(e)}")
-                            continue
+                    # Print raw response to terminal
+                    print("\n=== Raw AI Response ===")
+                    print(response.text)
+                    print("\n=== Structured Quotation Data ===")
+                    print(json.dumps(quotation_data, indent=2))
+                    print("==============================\n")
                     
-                    if not input_texts:
-                        st.error("No valid content could be extracted from the uploaded documents.")
-                        return
-                    
-                    # Find similar examples using RAG
-                    combined_input = "\n\n".join(input_texts)
-                    similar_examples = find_similar_examples(combined_input) if st.session_state.vector_store else None
-                    
-                    # Display which examples are being used
-                    if similar_examples:
-                        st.info(f"Using the following examples for context: {', '.join([f'Example {i+1}' for i in range(len(similar_examples))])}")
-                    
-                    # Prepare the actual text of the most relevant examples
-                    relevant_examples = []
-                    if similar_examples:
-                        for sim in similar_examples:
-                            for ex in st.session_state.examples:
-                                if sim.page_content in ex['input_text'] or sim.page_content in ex['output_text']:
-                                    relevant_examples.append(ex)
-                                    break
-                    else:
-                        relevant_examples = st.session_state.examples
-                    
-                    # Generate quotation with enhanced prompt
-                    prompt = generate_quotation_prompt(
-                        relevant_examples,
-                        combined_input,
-                        similar_examples,
-                        st.session_state.template
-                    )
-                    
-                    # Add noise handling instructions to prompt
-                    prompt += """
-IMPORTANT: The input documents may contain noise or inconsistencies. Please:
-1. Focus on extracting clear, unambiguous information
-2. Skip or mark uncertain items for review
-3. Use common sense and industry standards for missing details
-4. Maintain consistency in pricing and specifications
-5. Break down items into detailed components
-6. Include source references for all items
-"""
-                    
-                    response = model.generate_content(prompt)
-                    
-                    try:
-                        # Extract and parse the response
-                        quotation_data = extract_json_from_response(response.text)
-                        
-                        # Print raw response to terminal
-                        print("\n=== Raw AI Response ===")
-                        print(response.text)
-                        print("\n=== Structured Quotation Data ===")
-                        print(json.dumps(quotation_data, indent=2))
-                        print("==============================\n")
+                    if quotation_data:
+                        # Validate line count
+                        if not validate_quotation_line_count(quotation_data):
+                            # st.warning("Generated quotation has fewer than 150 line items. Regenerating with more detail...")
+                            # Regenerate with emphasis on more detail
+                            response = model.generate_content(prompt + "\n\nIMPORTANT: The previous response did not have enough line items. Please generate a more detailed quotation with at least 150 line items.")
+                            quotation_data = extract_json_from_response(response.text)
+                            
+                            # Print regenerated response to terminal
+                            print("\n=== Regenerated Raw AI Response ===")
+                            print(response.text)
+                            print("\n=== Regenerated Structured Quotation Data ===")
+                            print(json.dumps(quotation_data, indent=2))
+                            print("=======================================\n")
                         
                         if quotation_data:
-                            # Validate line count
-                            if not validate_quotation_line_count(quotation_data):
-                                # st.warning("Generated quotation has fewer than 150 line items. Regenerating with more detail...")
-                                # Regenerate with emphasis on more detail
-                                response = model.generate_content(prompt + "\n\nIMPORTANT: The previous response did not have enough line items. Please generate a more detailed quotation with at least 150 line items.")
-                                quotation_data = extract_json_from_response(response.text)
-                                
-                                # Print regenerated response to terminal
-                                print("\n=== Regenerated Raw AI Response ===")
-                                print(response.text)
-                                print("\n=== Regenerated Structured Quotation Data ===")
-                                print(json.dumps(quotation_data, indent=2))
-                                print("=======================================\n")
+                            # Create Excel file with template structure
+                            excel_file = create_excel_from_quotation(quotation_data, st.session_state.template)
                             
-                            if quotation_data:
-                                # Create Excel file with template structure
-                                excel_file = create_excel_from_quotation(quotation_data, st.session_state.template)
-                                
-                                # Add to chat history
-                                st.session_state.chat_history.append({
-                                    'role': 'user',
-                                    'content': f"Generated quotation for {len(uploaded_files)} files"
-                                })
-                                st.session_state.chat_history.append({
-                                    'role': 'assistant',
-                                    'content': "Here's the generated quotation:"
-                                })
-                                
-                                # Create tabs for different views
-                                tab1, tab2, tab3 = st.tabs(["Excel Preview", "JSON Data", "Download"])
-                                
-                                with tab1:
-                                    # Read the Excel file and display preview
-                                    df = pd.read_excel(excel_file, sheet_name=None)
-                                    for sheet_name, sheet_df in df.items():
-                                        st.subheader(sheet_name)
-                                        st.dataframe(sheet_df, use_container_width=True)
-                                
-                                with tab2:
-                                    # Display formatted JSON
-                                    st.json(quotation_data)
-                                
-                                with tab3:
-                                    # Add Excel download button
-                                    with open(excel_file, 'rb') as f:
-                                        st.download_button(
-                                            label="Download Quotation (Excel)",
-                                            data=f,
-                                            file_name=f"quotation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                        )
-                            else:
-                                st.error("Error structuring the AI response. Please try again.")
-                                st.text_area("Raw AI Response", response.text, height=300)
+                            # Add to chat history
+                            st.session_state.chat_history.append({
+                                'role': 'user',
+                                'content': f"Generated quotation for {len(uploaded_files)} files"
+                            })
+                            st.session_state.chat_history.append({
+                                'role': 'assistant',
+                                'content': "Here's the generated quotation:"
+                            })
+                            
+                            # Create tabs for different views
+                            tab1, tab2, tab3 = st.tabs(["Excel Preview", "JSON Data", "Download"])
+                            
+                            with tab1:
+                                # Read the Excel file and display preview
+                                df = pd.read_excel(excel_file, sheet_name=None)
+                                for sheet_name, sheet_df in df.items():
+                                    st.subheader(sheet_name)
+                                    st.dataframe(sheet_df, use_container_width=True)
+                            
+                            with tab2:
+                                # Display formatted JSON
+                                st.json(quotation_data)
+                            
+                            with tab3:
+                                # Add Excel download button
+                                with open(excel_file, 'rb') as f:
+                                    st.download_button(
+                                        label="Download Quotation (Excel)",
+                                        data=f,
+                                        file_name=f"quotation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                    )
                         else:
                             st.error("Error structuring the AI response. Please try again.")
                             st.text_area("Raw AI Response", response.text, height=300)
-                    except Exception as e:
-                        st.error(f"Unexpected error: {e}")
+                    else:
+                        st.error("Error structuring the AI response. Please try again.")
                         st.text_area("Raw AI Response", response.text, height=300)
                 except Exception as e:
-                    st.error(f"An error occurred during document processing: {str(e)}")
-                    logger.error(f"Error in main processing: {e}", exc_info=True)
-                    return
+                    st.error(f"Unexpected error: {e}")
+                    st.text_area("Raw AI Response", response.text, height=300)
     with add_example_col:
         if st.button("Add Example", key="add_example_btn_fab"):
             st.session_state.show_example_overlay = True
