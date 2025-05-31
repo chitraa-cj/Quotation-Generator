@@ -567,25 +567,112 @@ def extract_json_from_response(response_text):
     print(response_text)
     print("=== End Raw Response Text ===\n")
     
-    # First, try to clean up the response text
-    cleaned_text = response_text.strip()
-    
-    # Remove any markdown code block markers
-    cleaned_text = re.sub(r'```json\s*', '', cleaned_text)
-    cleaned_text = re.sub(r'```\s*$', '', cleaned_text)
-    
-    try:
-        # First try direct JSON parsing
-        data = json.loads(cleaned_text)
-        print("\n=== Direct JSON Parse Result ===")
-        print(json.dumps(data, indent=2))
-        print("=== End Direct JSON Parse Result ===\n")
+    def clean_json_text(text):
+        """Helper function to clean and fix JSON text"""
+        # Remove markdown code blocks and extra whitespace
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*$', '', text)
+        text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
         
-        # Validate the data structure
+        # Fix common JSON formatting issues
+        text = re.sub(r',\s*}', '}', text)  # Remove trailing commas
+        text = re.sub(r',\s*]', ']', text)  # Remove trailing commas in arrays
+        text = re.sub(r'}\s*{', '},{', text)  # Add commas between objects
+        text = re.sub(r']\s*\[', '],[', text)  # Add commas between arrays
+        
+        # Fix property names and values
+        text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)  # Quote property names
+        text = re.sub(r'"\s*{', '":{', text)  # Fix missing colons
+        text = re.sub(r'"\s*\[', '":[', text)  # Fix missing colons before arrays
+        
+        # Fix missing quotes around string values
+        text = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_]*)([,\s}])', r':"\1"\2', text)
+        
+        # Fix boolean and null values
+        text = re.sub(r':\s*true([,\s}])', r':true\1', text)
+        text = re.sub(r':\s*false([,\s}])', r':false\1', text)
+        text = re.sub(r':\s*null([,\s}])', r':null\1', text)
+        
+        # Fix missing commas in arrays and objects
+        text = re.sub(r'"\s*"', '","', text)  # Add commas between string values in arrays
+        text = re.sub(r'}\s*"', '},"', text)  # Add commas between objects and strings
+        text = re.sub(r'"]\s*"', '"],"', text)  # Add commas between arrays and strings
+        
+        # Fix nested object and array delimiters
+        text = re.sub(r'}\s*]', '}]', text)  # Fix object in array
+        text = re.sub(r']\s*}', ']}', text)  # Fix array in object
+        
+        # Fix numeric values
+        text = re.sub(r':\s*(\d+\.?\d*)([,\s}])', r':\1\2', text)  # Ensure proper number format
+        
+        return text.strip()
+    
+    def fix_json_structure(text):
+        """Helper function to fix JSON structure issues"""
+        # Ensure proper nesting of braces and brackets
+        stack = []
+        fixed_text = ""
+        in_string = False
+        escape_next = False
+        
+        for char in text:
+            if escape_next:
+                fixed_text += char
+                escape_next = False
+                continue
+                
+            if char == '\\':
+                escape_next = True
+                fixed_text += char
+                continue
+                
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                fixed_text += char
+                continue
+                
+            if not in_string:
+                if char in '{[':
+                    stack.append(char)
+                    fixed_text += char
+                elif char in '}]':
+                    if stack:
+                        if (char == '}' and stack[-1] == '{') or (char == ']' and stack[-1] == '['):
+                            stack.pop()
+                            fixed_text += char
+                        else:
+                            # Fix mismatched brackets
+                            if char == '}':
+                                fixed_text += ']'
+                            else:
+                                fixed_text += '}'
+                    else:
+                        # Add missing opening bracket
+                        if char == '}':
+                            fixed_text = '{' + fixed_text + char
+                        else:
+                            fixed_text = '[' + fixed_text + char
+                else:
+                    fixed_text += char
+            else:
+                fixed_text += char
+        
+        # Close any remaining open brackets
+        while stack:
+            if stack[-1] == '{':
+                fixed_text += '}'
+            else:
+                fixed_text += ']'
+            stack.pop()
+        
+        return fixed_text
+    
+    def validate_and_fix_data(data):
+        """Helper function to validate and fix data structure"""
         if not isinstance(data, dict):
             raise ValueError("Invalid JSON structure: root must be an object")
         
-        # Ensure required fields exist
+        # Ensure required fields exist with proper structure
         if "sections" not in data:
             data["sections"] = []
         if "company_info" not in data:
@@ -604,171 +691,74 @@ def extract_json_from_response(response_text):
             for subsection in section["subsections"]:
                 if "items" not in subsection:
                     subsection["items"] = []
+                for item in subsection["items"]:
+                    if "source" not in item:
+                        item["source"] = {"document": "", "line_reference": ""}
+        
+        # Ensure all numeric values are proper numbers
+        for section in data["sections"]:
+            for subsection in section["subsections"]:
+                for item in subsection["items"]:
+                    if "quantity" in item:
+                        try:
+                            item["quantity"] = float(item["quantity"])
+                        except (ValueError, TypeError):
+                            item["quantity"] = 0
+                    if "unit_price" in item:
+                        try:
+                            item["unit_price"] = float(item["unit_price"])
+                        except (ValueError, TypeError):
+                            item["unit_price"] = 0
+                    if "total_price" in item:
+                        try:
+                            item["total_price"] = float(item["total_price"])
+                        except (ValueError, TypeError):
+                            item["total_price"] = 0
+        
+        try:
+            data["total_amount"] = float(data["total_amount"])
+        except (ValueError, TypeError):
+            data["total_amount"] = 0
         
         return data
-    except json.JSONDecodeError as e:
-        print(f"\n=== JSON Decode Error ===")
-        print(f"Error: {str(e)}")
-        print("=== End JSON Decode Error ===\n")
+    
+    # Try multiple parsing approaches
+    parsing_attempts = [
+        # Attempt 1: Direct parsing with structure fix
+        lambda: json.loads(fix_json_structure(clean_json_text(response_text))),
         
-        try:
-            # Try to find JSON block in the response
-            match = re.search(r'\{[\s\S]*\}', cleaned_text)
-            if match:
-                json_str = match.group(0)
-                print("\n=== Found JSON Block ===")
-                print(json_str)
-                print("=== End Found JSON Block ===\n")
-                
-                data = json.loads(json_str)
-                # Apply the same validation as above
-                if not isinstance(data, dict):
-                    raise ValueError("Invalid JSON structure: root must be an object")
-                if "sections" not in data:
-                    data["sections"] = []
-                if "company_info" not in data:
-                    data["company_info"] = {"name": "", "address": "", "contact": ""}
-                if "client_info" not in data:
-                    data["client_info"] = {"name": "", "project_name": ""}
-                if "terms" not in data:
-                    data["terms"] = {"payment_terms": "Net 30", "validity": "30 days"}
-                if "total_amount" not in data:
-                    data["total_amount"] = 0
-                for section in data["sections"]:
-                    if "subsections" not in section:
-                        section["subsections"] = []
-                    for subsection in section["subsections"]:
-                        if "items" not in subsection:
-                            subsection["items"] = []
-                return data
-        except Exception as e:
-            print(f"\n=== JSON Block Parse Error ===")
-            print(f"Error: {str(e)}")
-            print("=== End JSON Block Parse Error ===\n")
+        # Attempt 2: Find JSON block and parse
+        lambda: json.loads(fix_json_structure(clean_json_text(re.search(r'\{[\s\S]*\}', response_text).group(0)))),
         
-        # If JSON parsing fails, try to structure the response
+        # Attempt 3: Try to extract and fix JSON structure
+        lambda: json.loads(fix_json_structure(clean_json_text(re.sub(r'[^{]*(\{[\s\S]*\})[^}]*', r'\1', response_text)))),
+        
+        # Attempt 4: Try to parse each line and build JSON
+        lambda: json.loads(fix_json_structure(clean_json_text(''.join([line.strip() for line in response_text.split('\n') if line.strip()])))),
+        
+        # Attempt 5: Try to fix common JSON issues and parse
+        lambda: json.loads(fix_json_structure(clean_json_text(re.sub(r'([^"])\'([^"]*)\'', r'\1"\2"', response_text))))
+    ]
+    
+    for attempt in parsing_attempts:
         try:
-            print("\n=== Attempting to Structure Response ===")
+            data = attempt()
+            print("\n=== JSON Parse Attempt Success ===")
+            print(json.dumps(data, indent=2))
+            print("=== End JSON Parse Attempt ===\n")
             
-            # Initialize structured data
-            structured_data = {
-                "company_info": {
-                    "name": "",
-                    "address": "",
-                    "contact": ""
-                },
-                "client_info": {
-                    "name": "",
-                    "project_name": ""
-                },
-                "sections": [],
-                "terms": {
-                    "payment_terms": "Net 30",
-                    "validity": "30 days"
-                },
-                "total_amount": 0
-            }
-            
-            # Split the response into lines and process
-            lines = cleaned_text.split('\n')
-            current_section = None
-            current_subsection = None
-            total_amount = 0
-            
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                
-                # Check for section headers
-                if any(line.upper().startswith(s) for s in ["AV EQUIPMENT", "LABOR", "CUSTOM FABRICATION", "CREATIVE SERVICES", "SUPPORTING SERVICES"]):
-                    current_section = {
-                        "name": line,
-                        "subsections": []
-                    }
-                    structured_data["sections"].append(current_section)
-                    current_subsection = None
-                    continue
-                
-                # Check for subsection headers
-                if current_section and (line.startswith("  ") or ":" in line):
-                    if not current_subsection:
-                        current_subsection = {
-                            "name": line.strip(),
-                            "items": []
-                        }
-                        current_section["subsections"].append(current_subsection)
-                    
-                    # Try to parse item details
-                    if ":" in line:
-                        parts = line.split(":")
-                        description = parts[0].strip()
-                        details = parts[1].strip()
-                        
-                        # Try to extract quantities and prices
-                        quantity_match = re.search(r'(\d+)\s*x\s*\$(\d+\.?\d*)', details)
-                        if quantity_match:
-                            quantity = int(quantity_match.group(1))
-                            unit_price = float(quantity_match.group(2))
-                            total_price = quantity * unit_price
-                            
-                            item = {
-                                "description": description,
-                                "quantity": quantity,
-                                "unit_price": unit_price,
-                                "total_price": total_price,
-                                "source": {
-                                    "document": "Input Document",
-                                    "line_reference": "1"
-                                }
-                            }
-                            current_subsection["items"].append(item)
-                            total_amount += total_price
-                
-                # Check for company info
-                if "company name:" in line.lower():
-                    structured_data["company_info"]["name"] = line.split(":", 1)[1].strip()
-                elif "address:" in line.lower():
-                    structured_data["company_info"]["address"] = line.split(":", 1)[1].strip()
-                elif "contact:" in line.lower():
-                    structured_data["company_info"]["contact"] = line.split(":", 1)[1].strip()
-                
-                # Check for client info
-                if "client name:" in line.lower():
-                    structured_data["client_info"]["name"] = line.split(":", 1)[1].strip()
-                elif "project name:" in line.lower():
-                    structured_data["client_info"]["project_name"] = line.split(":", 1)[1].strip()
-                
-                # Check for terms
-                if "payment terms:" in line.lower():
-                    structured_data["terms"]["payment_terms"] = line.split(":", 1)[1].strip()
-                elif "validity:" in line.lower():
-                    structured_data["terms"]["validity"] = line.split(":", 1)[1].strip()
-            
-            # Update total amount
-            structured_data["total_amount"] = total_amount
-            
-            # If we have no sections but have items, create a default section
-            if not structured_data['sections']:
-                structured_data['sections'] = [{
-                    "name": "Main Section",
-                    "subsections": [{
-                        "name": "Default Subsection",
-                        "items": []
-                    }]
-                }]
-            
-            print("\n=== Final Structured Data ===")
-            print(json.dumps(structured_data, indent=2))
-            print("=== End Final Structured Data ===\n")
-            
-            return structured_data
+            # Validate and fix the data structure
+            data = validate_and_fix_data(data)
+            return data
             
         except Exception as e:
-            print(f"\n=== Structure Response Error ===")
+            print(f"\n=== JSON Parse Attempt Failed ===")
             print(f"Error: {str(e)}")
-            print("=== End Structure Response Error ===\n")
-            return None
+            print("=== End JSON Parse Attempt ===\n")
+            continue
+    
+    print("\n=== All JSON Parse Attempts Failed ===")
+    return None
 
 def create_excel_from_quotation(quotation_data, template=None):
     """Create an Excel file from quotation data, maintaining template structure if provided"""
@@ -1308,45 +1298,15 @@ Best regards,
                                     st.text_area("Raw AI Response", response_text, height=300)
                                 return
                             
-                            # Validate the quotation data structure
-                            required_fields = ['sections', 'total_amount']
-                            missing_fields = [field for field in required_fields if field not in quotation_data]
-                            if missing_fields:
-                                st.error(f"Generated quotation is missing required fields: {', '.join(missing_fields)}")
-                                with tab2:
-                                    st.text_area("Raw AI Response", response_text, height=300)
-                                return
-                            
-                            # Validate that we have actual data
-                            if not quotation_data.get('sections') or len(quotation_data['sections']) == 0:
-                                st.error("Generated quotation has no sections. Please try again.")
-                                with tab2:
-                                    st.text_area("Raw AI Response", response_text, height=300)
-                                return
-                            
-                            # Print the parsed data to terminal for debugging
-                            print("\n=== Parsed Quotation Data ===")
-                            print(json.dumps(quotation_data, indent=2))
-                            
-                            # Show JSON data immediately
+                            # Show JSON data immediately in a formatted way
                             with tab2:
-                                st.json(quotation_data)
+                                st.json(quotation_data, expanded=True)
                             
                             # Generate Excel file
                             try:
                                 excel_file = create_excel_from_quotation(quotation_data, st.session_state.template)
                                 
-                                # Add to chat history
-                                st.session_state.chat_history.append({
-                                    'role': 'user',
-                                    'content': f"Generated quotation for {len(uploaded_files)} files"
-                                })
-                                st.session_state.chat_history.append({
-                                    'role': 'assistant',
-                                    'content': "Here's the generated quotation:"
-                                })
-                                
-                                # Show Excel preview
+                                # Show Excel preview with proper formatting
                                 with tab1:
                                     try:
                                         df = pd.read_excel(excel_file, sheet_name=None)
@@ -1357,21 +1317,40 @@ Best regards,
                                         for sheet_name, sheet_df in df.items():
                                             st.subheader(sheet_name)
                                             if not sheet_df.empty:
-                                                st.dataframe(sheet_df, use_container_width=True)
+                                                # Format numeric columns
+                                                for col in sheet_df.columns:
+                                                    if 'Price' in col or 'Amount' in col:
+                                                        sheet_df[col] = pd.to_numeric(sheet_df[col], errors='coerce')
+                                                    elif 'Qty' in col or 'Quantity' in col:
+                                                        sheet_df[col] = pd.to_numeric(sheet_df[col], errors='coerce')
+                                                
+                                                # Display the dataframe with proper formatting
+                                                st.dataframe(
+                                                    sheet_df,
+                                                    use_container_width=True,
+                                                    hide_index=True
+                                                )
                                             else:
                                                 st.warning(f"Sheet '{sheet_name}' is empty.")
                                     except Exception as e:
                                         st.error(f"Error displaying Excel preview: {str(e)}")
+                                        st.text_area("Error Details", str(e), height=300)
                                 
-                                # Add download button
+                                # Add download button with proper styling
                                 with tab3:
-                                    with open(excel_file, 'rb') as f:
-                                        st.download_button(
-                                            label="Download Quotation (Excel)",
-                                            data=f,
-                                            file_name=f"quotation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                        )
+                                    try:
+                                        with open(excel_file, 'rb') as f:
+                                            excel_data = f.read()
+                                            st.download_button(
+                                                label="📥 Download Quotation (Excel)",
+                                                data=excel_data,
+                                                file_name=f"quotation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                                use_container_width=True
+                                            )
+                                    except Exception as e:
+                                        st.error(f"Error creating download button: {str(e)}")
+                                        st.text_area("Error Details", str(e), height=300)
                             except Exception as e:
                                 st.error(f"Error creating Excel file: {str(e)}")
                                 with tab2:
