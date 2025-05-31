@@ -300,16 +300,16 @@ Follow these steps carefully:
             "subsections": [
                 {
                     "name": "Main Equipment",
-                    "items": [
-                        {
-                            "description": "string",
-                            "quantity": number,
-                            "unit_price": number,
-                            "total_price": number,
-                            "source": {
-                                "document": "string",
-                                "line_reference": "string"
-                            }
+            "items": [
+                {
+                    "description": "string",
+                    "quantity": number,
+                    "unit_price": number,
+                    "total_price": number,
+                    "source": {
+                        "document": "string",
+                        "line_reference": "string"
+                    }
                         }
                     ]
                 },
@@ -581,26 +581,13 @@ def extract_json_from_response(response_text):
         print(json.dumps(data, indent=2))
         print("=== End Direct JSON Parse Result ===\n")
         
-        # Validate and fix the data structure if needed
+        # Validate the data structure
         if not isinstance(data, dict):
-            data = {"sections": [data]} if isinstance(data, list) else {"sections": []}
+            raise ValueError("Invalid JSON structure: root must be an object")
         
-        # Ensure we have the basic structure
+        # Ensure required fields exist
         if "sections" not in data:
             data["sections"] = []
-        
-        # If we have items but no sections, create a default section
-        if "items" in data and not data["sections"]:
-            data["sections"] = [{
-                "name": "Main Section",
-                "subsections": [{
-                    "name": "Default Subsection",
-                    "items": data["items"]
-                }]
-            }]
-            del data["items"]
-        
-        # Ensure we have company and client info
         if "company_info" not in data:
             data["company_info"] = {"name": "", "address": "", "contact": ""}
         if "client_info" not in data:
@@ -609,6 +596,14 @@ def extract_json_from_response(response_text):
             data["terms"] = {"payment_terms": "Net 30", "validity": "30 days"}
         if "total_amount" not in data:
             data["total_amount"] = 0
+        
+        # Validate sections structure
+        for section in data["sections"]:
+            if "subsections" not in section:
+                section["subsections"] = []
+            for subsection in section["subsections"]:
+                if "items" not in subsection:
+                    subsection["items"] = []
         
         return data
     except json.JSONDecodeError as e:
@@ -626,20 +621,11 @@ def extract_json_from_response(response_text):
                 print("=== End Found JSON Block ===\n")
                 
                 data = json.loads(json_str)
-                # Apply the same structure validation as above
+                # Apply the same validation as above
                 if not isinstance(data, dict):
-                    data = {"sections": [data]} if isinstance(data, list) else {"sections": []}
+                    raise ValueError("Invalid JSON structure: root must be an object")
                 if "sections" not in data:
                     data["sections"] = []
-                if "items" in data and not data["sections"]:
-                    data["sections"] = [{
-                        "name": "Main Section",
-                        "subsections": [{
-                            "name": "Default Subsection",
-                            "items": data["items"]
-                        }]
-                    }]
-                    del data["items"]
                 if "company_info" not in data:
                     data["company_info"] = {"name": "", "address": "", "contact": ""}
                 if "client_info" not in data:
@@ -648,7 +634,12 @@ def extract_json_from_response(response_text):
                     data["terms"] = {"payment_terms": "Net 30", "validity": "30 days"}
                 if "total_amount" not in data:
                     data["total_amount"] = 0
-                
+                for section in data["sections"]:
+                    if "subsections" not in section:
+                        section["subsections"] = []
+                    for subsection in section["subsections"]:
+                        if "items" not in subsection:
+                            subsection["items"] = []
                 return data
         except Exception as e:
             print(f"\n=== JSON Block Parse Error ===")
@@ -658,10 +649,8 @@ def extract_json_from_response(response_text):
         # If JSON parsing fails, try to structure the response
         try:
             print("\n=== Attempting to Structure Response ===")
-            # Split the response into sections
-            sections = cleaned_text.split('\n\n')
-            print(f"Found {len(sections)} sections")
             
+            # Initialize structured data
             structured_data = {
                 "company_info": {
                     "name": "",
@@ -680,66 +669,87 @@ def extract_json_from_response(response_text):
                 "total_amount": 0
             }
             
+            # Split the response into lines and process
+            lines = cleaned_text.split('\n')
             current_section = None
             current_subsection = None
+            total_amount = 0
             
-            for section in sections:
-                if section.strip():
-                    print(f"\nProcessing section: {section.strip()[:50]}...")
-                    # Check if this is a main section
-                    if any(section.upper().startswith(s) for s in ["AV EQUIPMENT", "LABOR", "CUSTOM FABRICATION", "CREATIVE SERVICES", "SUPPORTING SERVICES"]):
-                        current_section = {
-                            "name": section.strip(),
-                            "subsections": []
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                
+                # Check for section headers
+                if any(line.upper().startswith(s) for s in ["AV EQUIPMENT", "LABOR", "CUSTOM FABRICATION", "CREATIVE SERVICES", "SUPPORTING SERVICES"]):
+                    current_section = {
+                        "name": line,
+                        "subsections": []
+                    }
+                    structured_data["sections"].append(current_section)
+                    current_subsection = None
+                    continue
+                
+                # Check for subsection headers
+                if current_section and (line.startswith("  ") or ":" in line):
+                    if not current_subsection:
+                        current_subsection = {
+                            "name": line.strip(),
+                            "items": []
                         }
-                        structured_data["sections"].append(current_section)
-                        print(f"Added main section: {section.strip()}")
-                    # Check if this is a subsection
-                    elif current_section and (section.strip().startswith("  ") or ":" in section):
-                        if not current_subsection:
-                            current_subsection = {
-                                "name": "Default Subsection",
-                                "items": []
-                            }
-                            current_section["subsections"].append(current_subsection)
+                        current_section["subsections"].append(current_subsection)
+                    
+                    # Try to parse item details
+                    if ":" in line:
+                        parts = line.split(":")
+                        description = parts[0].strip()
+                        details = parts[1].strip()
                         
-                        # Try to parse the item
-                        try:
-                            if ":" in section:
-                                parts = section.split(":")
-                                description = parts[0].strip()
-                                details = parts[1].strip()
-                                
-                                # Try to extract quantities and prices
-                                quantity_match = re.search(r'(\d+)\s*x\s*\$(\d+\.?\d*)', details)
-                                if quantity_match:
-                                    quantity = int(quantity_match.group(1))
-                                    unit_price = float(quantity_match.group(2))
-                                    total_price = quantity * unit_price
-                                    
-                                    item = {
-                                        "description": description,
-                                        "quantity": quantity,
-                                        "unit_price": unit_price,
-                                        "total_price": total_price,
-                                        "source": {
-                                            "document": "Input Document",
-                                            "line_reference": "1"
-                                        }
-                                    }
-                                    current_subsection["items"].append(item)
-                                    structured_data["total_amount"] += total_price
-                                    print(f"Added item: {description}")
-                        except Exception as e:
-                            print(f"Error processing item: {str(e)}")
-                            continue
+                        # Try to extract quantities and prices
+                        quantity_match = re.search(r'(\d+)\s*x\s*\$(\d+\.?\d*)', details)
+                        if quantity_match:
+                            quantity = int(quantity_match.group(1))
+                            unit_price = float(quantity_match.group(2))
+                            total_price = quantity * unit_price
+                            
+                            item = {
+                                "description": description,
+                                "quantity": quantity,
+                                "unit_price": unit_price,
+                                "total_price": total_price,
+                                "source": {
+                                    "document": "Input Document",
+                                    "line_reference": "1"
+                                }
+                            }
+                            current_subsection["items"].append(item)
+                            total_amount += total_price
+                
+                # Check for company info
+                if "company name:" in line.lower():
+                    structured_data["company_info"]["name"] = line.split(":", 1)[1].strip()
+                elif "address:" in line.lower():
+                    structured_data["company_info"]["address"] = line.split(":", 1)[1].strip()
+                elif "contact:" in line.lower():
+                    structured_data["company_info"]["contact"] = line.split(":", 1)[1].strip()
+                
+                # Check for client info
+                if "client name:" in line.lower():
+                    structured_data["client_info"]["name"] = line.split(":", 1)[1].strip()
+                elif "project name:" in line.lower():
+                    structured_data["client_info"]["project_name"] = line.split(":", 1)[1].strip()
+                
+                # Check for terms
+                if "payment terms:" in line.lower():
+                    structured_data["terms"]["payment_terms"] = line.split(":", 1)[1].strip()
+                elif "validity:" in line.lower():
+                    structured_data["terms"]["validity"] = line.split(":", 1)[1].strip()
             
-            print("\n=== Final Structured Data ===")
-            print(json.dumps(structured_data, indent=2))
-            print("=== End Final Structured Data ===\n")
+            # Update total amount
+            structured_data["total_amount"] = total_amount
             
             # If we have no sections but have items, create a default section
-            if not structured_data['sections'] and any('items' in subsection for section in structured_data.get('sections', []) for subsection in section.get('subsections', [])):
+            if not structured_data['sections']:
                 structured_data['sections'] = [{
                     "name": "Main Section",
                     "subsections": [{
@@ -748,7 +758,12 @@ def extract_json_from_response(response_text):
                     }]
                 }]
             
+            print("\n=== Final Structured Data ===")
+            print(json.dumps(structured_data, indent=2))
+            print("=== End Final Structured Data ===\n")
+            
             return structured_data
+            
         except Exception as e:
             print(f"\n=== Structure Response Error ===")
             print(f"Error: {str(e)}")
@@ -1019,7 +1034,11 @@ def create_excel_from_quotation(quotation_data, template=None):
     
     # Save the Excel file
     print("\nSaving Excel file")
-    excel_buffer.close()
+    try:
+        excel_buffer.close()
+    except Exception as e:
+        print(f"Error closing Excel buffer: {str(e)}")
+        raise
     
     # Verify the file was created and has content
     if not os.path.exists('quotation.xlsx'):
@@ -1030,6 +1049,17 @@ def create_excel_from_quotation(quotation_data, template=None):
         raise ValueError("Created Excel file is empty")
     
     print(f"Excel file created successfully (size: {file_size} bytes)")
+    
+    # Verify the file can be read
+    try:
+        df = pd.read_excel('quotation.xlsx', sheet_name=None)
+        if not df:
+            raise ValueError("Excel file has no sheets")
+        print(f"Successfully verified Excel file with {len(df)} sheets")
+    except Exception as e:
+        print(f"Error verifying Excel file: {str(e)}")
+        raise
+    
     return 'quotation.xlsx'
 
 def display_chat_message(message):
@@ -1080,8 +1110,8 @@ def main():
             st.sidebar.text_area(
                 "Template Preview",
                 template_text,
-                height=200
-            )
+            height=200
+        )
     else:
         st.session_state.template = """[COMPANY_NAME]
 [ADDRESS]
@@ -1298,87 +1328,60 @@ Best regards,
                             print("\n=== Parsed Quotation Data ===")
                             print(json.dumps(quotation_data, indent=2))
                             
+                            # Show JSON data immediately
+                            with tab2:
+                                st.json(quotation_data)
+                            
+                            # Generate Excel file
+                            try:
+                                excel_file = create_excel_from_quotation(quotation_data, st.session_state.template)
+                                
+                                # Add to chat history
+                                st.session_state.chat_history.append({
+                                    'role': 'user',
+                                    'content': f"Generated quotation for {len(uploaded_files)} files"
+                                })
+                                st.session_state.chat_history.append({
+                                    'role': 'assistant',
+                                    'content': "Here's the generated quotation:"
+                                })
+                                
+                                # Show Excel preview
+                                with tab1:
+                                    try:
+                                        df = pd.read_excel(excel_file, sheet_name=None)
+                                        if not df:
+                                            st.error("Failed to read the generated Excel file.")
+                                            return
+                                        
+                                        for sheet_name, sheet_df in df.items():
+                                            st.subheader(sheet_name)
+                                            if not sheet_df.empty:
+                                                st.dataframe(sheet_df, use_container_width=True)
+                                            else:
+                                                st.warning(f"Sheet '{sheet_name}' is empty.")
+                                    except Exception as e:
+                                        st.error(f"Error displaying Excel preview: {str(e)}")
+                                
+                                # Add download button
+                                with tab3:
+                                    with open(excel_file, 'rb') as f:
+                                        st.download_button(
+                                            label="Download Quotation (Excel)",
+                                            data=f,
+                                            file_name=f"quotation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                                        )
+                            except Exception as e:
+                                st.error(f"Error creating Excel file: {str(e)}")
+                                with tab2:
+                                    st.text_area("Raw AI Response", response_text, height=300)
+                            
                         except Exception as e:
                             st.error(f"Error parsing the AI response: {str(e)}")
                             with tab2:
                                 st.text_area("Raw AI Response", response_text, height=300)
                             return
-                
-                # Show JSON data immediately
-                with tab2:
-                    if quotation_data:
-                        st.json(quotation_data)
-                    else:
-                        st.error("No valid quotation data to display")
-                        st.text_area("Raw AI Response", response_text, height=300)
-                
-                # Validate line count and generate Excel
-                with progress_container:
-                    with st.spinner("Generating Excel file..."):
-                        if not validate_quotation_line_count(quotation_data):
-                            try:
-                                response_text = generate_quotation_with_retry(
-                                    model,
-                                    prompt + "\n\nIMPORTANT: The previous response did not have enough line items. Please generate a more detailed quotation with at least 150 line items."
-                                )
-                                if response_text:
-                                    quotation_data = extract_json_from_response(response_text)
-                                    if not quotation_data:
-                                        st.error("Failed to generate a more detailed quotation.")
-                                        with tab2:
-                                            st.text_area("Raw AI Response", response_text, height=300)
-                                        return
-                            except Exception as e:
-                                if "503" in str(e) or "overload" in str(e).lower():
-                                    st.warning("The model is currently overloaded. Using the original response.")
-                                elif "504" in str(e):
-                                    st.warning("The request for additional details timed out. Using the original response.")
-                                else:
-                                    raise e
-                        
-                        try:
-                            excel_file = create_excel_from_quotation(quotation_data, st.session_state.template)
-                            
-                            # Add to chat history
-                            st.session_state.chat_history.append({
-                                'role': 'user',
-                                'content': f"Generated quotation for {len(uploaded_files)} files"
-                            })
-                            st.session_state.chat_history.append({
-                                'role': 'assistant',
-                                'content': "Here's the generated quotation:"
-                            })
-                            
-                            # Show Excel preview
-                            with tab1:
-                                try:
-                                    df = pd.read_excel(excel_file, sheet_name=None)
-                                    if not df:
-                                        st.error("Failed to read the generated Excel file.")
-                                        return
-                                    
-                                    for sheet_name, sheet_df in df.items():
-                                        st.subheader(sheet_name)
-                                        if not sheet_df.empty:
-                                            st.dataframe(sheet_df, use_container_width=True)
-                                        else:
-                                            st.warning(f"Sheet '{sheet_name}' is empty.")
-                                except Exception as e:
-                                    st.error(f"Error displaying Excel preview: {str(e)}")
-                            
-                            # Add download button
-                            with tab3:
-                                with open(excel_file, 'rb') as f:
-                                    st.download_button(
-                                        label="Download Quotation (Excel)",
-                                        data=f,
-                                        file_name=f"quotation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                                    )
-                        except Exception as e:
-                            st.error(f"Error creating Excel file: {str(e)}")
-                            with tab2:
-                                st.text_area("Raw AI Response", response_text, height=300)
                 
                 # Clear progress container
                 progress_container.empty()
