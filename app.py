@@ -218,24 +218,40 @@ def generate_quotation_prompt(examples, input_docs_text, similar_examples=None, 
     
     # Extract template placeholders if template is provided
     template_analysis = ""
-    if template:
-        placeholders = extract_template_placeholders(template)
-        template_analysis = f"\nTemplate Analysis:\nThe provided template contains the following placeholders: {', '.join(placeholders)}\n"
-        template_analysis += "Ensure all these placeholders are properly filled with relevant information from the input documents.\n"
+    if template and hasattr(template, 'name') and template.name.endswith('.xlsx'):
+        try:
+            # Handle UploadedFile object
+            if hasattr(template, 'getvalue'):
+                # Create a temporary file to read the Excel
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                    tmp_file.write(template.getvalue())
+                    tmp_file.flush()
+                    df = pd.read_excel(tmp_file.name)
+                    os.unlink(tmp_file.name)
+            else:
+                df = pd.read_excel(template)
+            
+            # Extract column names as placeholders
+            placeholders = list(df.columns)
+            template_analysis = f"\nTemplate Analysis:\nThe provided template contains the following columns: {', '.join(placeholders)}\n"
+            template_analysis += "Ensure all these columns are properly filled with relevant information from the input documents.\n"
+        except Exception as e:
+            print(f"Error analyzing template: {str(e)}")
+            template_analysis = "\nTemplate Analysis:\nCould not analyze template structure. Proceeding with default format.\n"
     
     # Chain of thought reasoning prompt
     chain_of_thought = f"""
 Follow these steps carefully:
 
 1. Template Analysis:
-   - Identify all placeholders in the template
+   - Identify all columns in the template
    - Understand the structure and formatting requirements
    - Note any specific sections or categories needed
    {template_analysis}
 
 2. Content Extraction:
    - Extract relevant information from input documents
-   - Match extracted information to template placeholders
+   - Match extracted information to template columns
    - Identify any missing information that needs to be inferred
 
 3. Granular Decomposition:
@@ -267,7 +283,7 @@ Follow these steps carefully:
 
 4. Validation:
    - Ensure all required sections are present
-   - Verify that all placeholders are filled
+   - Verify that all template columns are filled
    - Check for consistency in formatting and style
    - Validate numerical calculations and units
    - Confirm all components are properly categorized
@@ -300,57 +316,11 @@ Follow these steps carefully:
             "subsections": [
                 {
                     "name": "Main Equipment",
-            "items": [
-                {
-                    "description": "string",
-                    "quantity": number,
-                    "unit_price": number,
-                    "total_price": number,
-                    "source": {
-                        "document": "string",
-                        "line_reference": "string"
-                    }
-                        }
-                    ]
-                },
-                {
-                    "name": "Accessories",
-                    "items": [...]
-                },
-                {
-                    "name": "Cables and Connectors",
-                    "items": [...]
-                },
-                {
-                    "name": "Mounts and Supports",
-                    "items": [...]
-                },
-                {
-                    "name": "Cases and Protection",
-                    "items": [...]
-                },
-                {
-                    "name": "Spare Parts",
-                    "items": [...]
-                },
-                {
-                    "name": "Testing Equipment",
-                    "items": [...]
-                }
-            ]
-        },
-        {
-            "name": "Labor",
-            "subsections": [
-                {
-                    "name": "Technical Staff",
                     "items": [
                         {
-                            "role": "string",
-                            "task": "string",
-                            "time_block": "string",
-                            "hours": number,
-                            "rate": number,
+                            "description": "string",
+                            "quantity": number,
+                            "unit_price": number,
                             "total_price": number,
                             "source": {
                                 "document": "string",
@@ -358,121 +328,6 @@ Follow these steps carefully:
                             }
                         }
                     ]
-                },
-                {
-                    "name": "Support Staff",
-                    "items": [...]
-                },
-                {
-                    "name": "Setup Labor",
-                    "items": [...]
-                },
-                {
-                    "name": "Operation Labor",
-                    "items": [...]
-                },
-                {
-                    "name": "Teardown Labor",
-                    "items": [...]
-                },
-                {
-                    "name": "Prep Time",
-                    "items": [...]
-                },
-                {
-                    "name": "Travel Time",
-                    "items": [...]
-                },
-                {
-                    "name": "Buffer Time",
-                    "items": [...]
-                },
-                {
-                    "name": "Per Diem and Meals",
-                    "items": [...]
-                }
-            ]
-        },
-        {
-            "name": "Custom Fabrication",
-            "subsections": [
-                {
-                    "name": "Materials",
-                    "items": [...]
-                },
-                {
-                    "name": "Labor",
-                    "items": [...]
-                },
-                {
-                    "name": "Finishing",
-                    "items": [...]
-                },
-                {
-                    "name": "Hardware",
-                    "items": [...]
-                },
-                {
-                    "name": "Protective Coatings",
-                    "items": [...]
-                }
-            ]
-        },
-        {
-            "name": "Creative Services",
-            "subsections": [
-                {
-                    "name": "Design",
-                    "items": [...]
-                },
-                {
-                    "name": "Content Creation",
-                    "items": [...]
-                },
-                {
-                    "name": "Technical Direction",
-                    "items": [...]
-                },
-                {
-                    "name": "Rehearsal Time",
-                    "items": [...]
-                },
-                {
-                    "name": "Quality Control",
-                    "items": [...]
-                }
-            ]
-        },
-        {
-            "name": "Supporting Services",
-            "subsections": [
-                {
-                    "name": "Freight and Shipping",
-                    "items": [...]
-                },
-                {
-                    "name": "Equipment Prep",
-                    "items": [...]
-                },
-                {
-                    "name": "Testing and Quality Control",
-                    "items": [...]
-                },
-                {
-                    "name": "Consumables",
-                    "items": [...]
-                },
-                {
-                    "name": "Warehouse Services",
-                    "items": [...]
-                },
-                {
-                    "name": "Local Services",
-                    "items": [...]
-                },
-                {
-                    "name": "Insurance and Permits",
-                    "items": [...]
                 }
             ]
         }
@@ -562,54 +417,147 @@ def validate_quotation_line_count(quotation_data):
     return total_lines >= 150
 
 def extract_json_from_response(response_text):
-    """Extract and parse JSON from the AI response"""
+    """Extract and parse JSON from the AI response with multiple fallback mechanisms"""
     print("\n=== Raw Response Text ===")
     print(response_text)
     print("=== End Raw Response Text ===\n")
     
-    def clean_json_text(text):
-        """Helper function to clean and fix JSON text"""
-        # Remove markdown code blocks and extra whitespace
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*$', '', text)
-        text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+    def sanitize_text(text):
+        """Sanitize text to ensure it's valid for JSON parsing"""
+        # Remove any non-printable characters
+        text = ''.join(char for char in text if char.isprintable() or char in '\n\r\t')
+        # Remove any BOM or special characters at the start
+        text = text.lstrip('\ufeff')
+        # Remove any leading/trailing whitespace
+        text = text.strip()
+        return text
+    
+    def extract_json_block(text):
+        """Extract the largest valid JSON block from text"""
+        # Find all potential JSON blocks
+        json_blocks = []
+        depth = 0
+        start = -1
+        in_string = False
+        escape_next = False
         
-        # Fix common JSON formatting issues
-        text = re.sub(r',\s*}', '}', text)  # Remove trailing commas
-        text = re.sub(r',\s*]', ']', text)  # Remove trailing commas in arrays
-        text = re.sub(r'}\s*{', '},{', text)  # Add commas between objects
-        text = re.sub(r']\s*\[', '],[', text)  # Add commas between arrays
+        for i, char in enumerate(text):
+            if escape_next:
+                escape_next = False
+                continue
+                
+            if char == '\\':
+                escape_next = True
+                continue
+                
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+                
+            if not in_string:
+                if char == '{':
+                    if depth == 0:
+                        start = i
+                    depth += 1
+                elif char == '}':
+                    depth -= 1
+                    if depth == 0 and start != -1:
+                        json_blocks.append(text[start:i+1])
+                        start = -1
         
-        # Fix property names and values
-        text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)  # Quote property names
-        text = re.sub(r'"\s*{', '":{', text)  # Fix missing colons
-        text = re.sub(r'"\s*\[', '":[', text)  # Fix missing colons before arrays
+        # Return the largest block
+        if json_blocks:
+            return max(json_blocks, key=len)
+        return None
+    
+    def fix_missing_commas(text):
+        """Fix missing commas in JSON text"""
+        # Fix missing commas between properties
+        text = re.sub(r'"\s*"', '","', text)  # Between strings
+        text = re.sub(r'}\s*{', '},{', text)  # Between objects
+        text = re.sub(r']\s*\[', '],[', text)  # Between arrays
+        text = re.sub(r'"\s*{', '":{', text)  # After property name
+        text = re.sub(r'"\s*\[', '":[', text)  # After property name before array
         
-        # Fix missing quotes around string values
-        text = re.sub(r':\s*([a-zA-Z_][a-zA-Z0-9_]*)([,\s}])', r':"\1"\2', text)
-        
-        # Fix boolean and null values
-        text = re.sub(r':\s*true([,\s}])', r':true\1', text)
-        text = re.sub(r':\s*false([,\s}])', r':false\1', text)
-        text = re.sub(r':\s*null([,\s}])', r':null\1', text)
+        # Fix missing commas after values
+        text = re.sub(r'"\s*"', '","', text)  # After string
+        text = re.sub(r'(\d+)\s*"', r'\1,"', text)  # After number
+        text = re.sub(r'true\s*"', r'true,"', text)  # After true
+        text = re.sub(r'false\s*"', r'false,"', text)  # After false
+        text = re.sub(r'null\s*"', r'null,"', text)  # After null
         
         # Fix missing commas in arrays and objects
-        text = re.sub(r'"\s*"', '","', text)  # Add commas between string values in arrays
-        text = re.sub(r'}\s*"', '},"', text)  # Add commas between objects and strings
-        text = re.sub(r'"]\s*"', '"],"', text)  # Add commas between arrays and strings
+        text = re.sub(r'"\s*]', '"]', text)  # Before array end
+        text = re.sub(r'"\s*}', '"}', text)  # Before object end
+        text = re.sub(r'(\d+)\s*]', r'\1]', text)  # Number before array end
+        text = re.sub(r'(\d+)\s*}', r'\1}', text)  # Number before object end
         
-        # Fix nested object and array delimiters
-        text = re.sub(r'}\s*]', '}]', text)  # Fix object in array
-        text = re.sub(r']\s*}', ']}', text)  # Fix array in object
+        # Fix specific delimiter issues
+        text = re.sub(r'([^,{])\s*"([^"]+)"\s*:', r'\1,"\2":', text)  # Missing comma before property
+        text = re.sub(r'([^,{])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1,"\2":', text)  # Missing comma before unquoted property
         
-        # Fix numeric values
-        text = re.sub(r':\s*(\d+\.?\d*)([,\s}])', r':\1\2', text)  # Ensure proper number format
+        return text
+    
+    def clean_json_text(text):
+        """Clean and fix JSON text with multiple passes"""
+        # First pass: Basic cleaning
+        text = sanitize_text(text)
+        text = re.sub(r'```json\s*', '', text)
+        text = re.sub(r'```\s*$', '', text)
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Second pass: Extract JSON block
+        json_block = extract_json_block(text)
+        if json_block:
+            text = json_block
+        
+        # Third pass: Fix common JSON issues
+        fixes = [
+            # Fix property names
+            (r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":'),
+            # Fix missing colons
+            (r'"\s*{', '":{'),
+            (r'"\s*\[', ':['),
+            # Fix string values
+            (r':\s*([a-zA-Z_][a-zA-Z0-9_]*)([,\s}])', r':"\1"\2'),
+            # Fix boolean and null
+            (r':\s*true([,\s}])', r':true\1'),
+            (r':\s*false([,\s}])', r':false\1'),
+            (r':\s*null([,\s}])', r':null\1'),
+            # Fix numeric values
+            (r':\s*(\d+\.?\d*)([,\s}])', r':\1\2'),
+            # Fix missing commas
+            (r'"\s*"', '","'),
+            (r'}\s*{', '},{'),
+            (r']\s*\[', '],['),
+            (r'(\d+)\s*"', r'\1,"'),
+            (r'true\s*"', r'true,"'),
+            (r'false\s*"', r'false,"'),
+            (r'null\s*"', r'null,"'),
+            # Fix nested structures
+            (r'}\s*]', '}]'),
+            (r']\s*}', ']}'),
+            # Remove trailing commas
+            (r',\s*}', '}'),
+            (r',\s*]', ']')
+        ]
+        
+        for pattern, replacement in fixes:
+            text = re.sub(pattern, replacement, text)
+        
+        # Fourth pass: Fix missing commas
+        text = fix_missing_commas(text)
+        
+        # Fifth pass: Ensure proper JSON structure
+        if not text.startswith('{'):
+            text = '{' + text
+        if not text.endswith('}'):
+            text = text + '}'
         
         return text.strip()
     
     def fix_json_structure(text):
-        """Helper function to fix JSON structure issues"""
-        # Ensure proper nesting of braces and brackets
+        """Fix JSON structure with balanced brackets and proper nesting"""
         stack = []
         fixed_text = ""
         in_string = False
@@ -620,17 +568,17 @@ def extract_json_from_response(response_text):
                 fixed_text += char
                 escape_next = False
                 continue
-                
+            
             if char == '\\':
                 escape_next = True
                 fixed_text += char
                 continue
-                
+            
             if char == '"' and not escape_next:
                 in_string = not in_string
                 fixed_text += char
                 continue
-                
+            
             if not in_string:
                 if char in '{[':
                     stack.append(char)
@@ -668,97 +616,217 @@ def extract_json_from_response(response_text):
         return fixed_text
     
     def validate_and_fix_data(data):
-        """Helper function to validate and fix data structure"""
-        if not isinstance(data, dict):
-            raise ValueError("Invalid JSON structure: root must be an object")
-        
-        # Ensure required fields exist with proper structure
-        if "sections" not in data:
-            data["sections"] = []
-        if "company_info" not in data:
-            data["company_info"] = {"name": "", "address": "", "contact": ""}
-        if "client_info" not in data:
-            data["client_info"] = {"name": "", "project_name": ""}
-        if "terms" not in data:
-            data["terms"] = {"payment_terms": "Net 30", "validity": "30 days"}
-        if "total_amount" not in data:
-            data["total_amount"] = 0
-        
-        # Validate sections structure
-        for section in data["sections"]:
-            if "subsections" not in section:
-                section["subsections"] = []
-            for subsection in section["subsections"]:
-                if "items" not in subsection:
-                    subsection["items"] = []
-                for item in subsection["items"]:
-                    if "source" not in item:
-                        item["source"] = {"document": "", "line_reference": ""}
-        
-        # Ensure all numeric values are proper numbers
-        for section in data["sections"]:
-            for subsection in section["subsections"]:
-                for item in subsection["items"]:
-                    if "quantity" in item:
-                        try:
-                            item["quantity"] = float(item["quantity"])
-                        except (ValueError, TypeError):
-                            item["quantity"] = 0
-                    if "unit_price" in item:
-                        try:
-                            item["unit_price"] = float(item["unit_price"])
-                        except (ValueError, TypeError):
-                            item["unit_price"] = 0
-                    if "total_price" in item:
-                        try:
-                            item["total_price"] = float(item["total_price"])
-                        except (ValueError, TypeError):
-                            item["total_price"] = 0
-        
+        """Validate and fix data structure with multiple fallbacks"""
         try:
-            data["total_amount"] = float(data["total_amount"])
-        except (ValueError, TypeError):
-            data["total_amount"] = 0
-        
-        return data
+            # Ensure data is a dictionary
+            if not isinstance(data, dict):
+                data = {"sections": [], "company_info": {}, "client_info": {}, "terms": {}, "total_amount": 0}
+            
+            # Ensure required fields exist
+            required_fields = {
+                "sections": [],
+                "company_info": {"name": "", "address": "", "contact": ""},
+                "client_info": {"name": "", "project_name": ""},
+                "terms": {"payment_terms": "Net 30", "validity": "30 days"},
+                "total_amount": 0
+            }
+            
+            for field, default_value in required_fields.items():
+                if field not in data:
+                    data[field] = default_value
+                elif isinstance(default_value, dict) and isinstance(data[field], dict):
+                    for subfield, subdefault in default_value.items():
+                        if subfield not in data[field]:
+                            data[field][subfield] = subdefault
+            
+            # Validate and fix sections
+            if not isinstance(data["sections"], list):
+                data["sections"] = []
+            
+            for section in data["sections"]:
+                if not isinstance(section, dict):
+                    continue
+                
+                if "subsections" not in section or not isinstance(section["subsections"], list):
+                    section["subsections"] = []
+                
+                for subsection in section["subsections"]:
+                    if not isinstance(subsection, dict):
+                        continue
+                    
+                    if "items" not in subsection or not isinstance(subsection["items"], list):
+                        subsection["items"] = []
+                    
+                    for item in subsection["items"]:
+                        if not isinstance(item, dict):
+                            continue
+                        
+                        # Ensure source field exists
+                        if "source" not in item or not isinstance(item["source"], dict):
+                            item["source"] = {"document": "", "line_reference": ""}
+                        
+                        # Convert numeric values
+                        numeric_fields = ["quantity", "unit_price", "total_price", "rate", "hours"]
+                        for field in numeric_fields:
+                            if field in item:
+                                try:
+                                    item[field] = float(item[field])
+                                except (ValueError, TypeError):
+                                    item[field] = 0
+            
+            # Convert total_amount to float
+            try:
+                data["total_amount"] = float(data["total_amount"])
+            except (ValueError, TypeError):
+                data["total_amount"] = 0
+            
+            return data
+            
+        except Exception as e:
+            print(f"Error in validate_and_fix_data: {str(e)}")
+            # Return a valid default structure
+            return {
+                "sections": [],
+                "company_info": {"name": "", "address": "", "contact": ""},
+                "client_info": {"name": "", "project_name": ""},
+                "terms": {"payment_terms": "Net 30", "validity": "30 days"},
+                "total_amount": 0
+            }
     
-    # Try multiple parsing approaches
-    parsing_attempts = [
-        # Attempt 1: Direct parsing with structure fix
+    # Multiple parsing attempts with different strategies
+    parsing_strategies = [
+        # Strategy 1: Direct parsing with full cleaning
         lambda: json.loads(fix_json_structure(clean_json_text(response_text))),
         
-        # Attempt 2: Find JSON block and parse
-        lambda: json.loads(fix_json_structure(clean_json_text(re.search(r'\{[\s\S]*\}', response_text).group(0)))),
+        # Strategy 2: Extract JSON block and parse
+        lambda: json.loads(fix_json_structure(clean_json_text(extract_json_block(response_text) or response_text))),
         
-        # Attempt 3: Try to extract and fix JSON structure
-        lambda: json.loads(fix_json_structure(clean_json_text(re.sub(r'[^{]*(\{[\s\S]*\})[^}]*', r'\1', response_text)))),
-        
-        # Attempt 4: Try to parse each line and build JSON
+        # Strategy 3: Line-by-line parsing
         lambda: json.loads(fix_json_structure(clean_json_text(''.join([line.strip() for line in response_text.split('\n') if line.strip()])))),
         
-        # Attempt 5: Try to fix common JSON issues and parse
-        lambda: json.loads(fix_json_structure(clean_json_text(re.sub(r'([^"])\'([^"]*)\'', r'\1"\2"', response_text))))
+        # Strategy 4: Try to fix common JSON issues
+        lambda: json.loads(fix_json_structure(clean_json_text(re.sub(r'([^"])\'([^"]*)\'', r'\1"\2"', response_text)))),
+        
+        # Strategy 5: Last resort - try to extract any valid JSON structure
+        lambda: json.loads(fix_json_structure(clean_json_text(re.sub(r'[^{]*(\{[\s\S]*\})[^}]*', r'\1', response_text))))
     ]
     
-    for attempt in parsing_attempts:
+    # Try each strategy
+    for i, strategy in enumerate(parsing_strategies, 1):
         try:
-            data = attempt()
-            print("\n=== JSON Parse Attempt Success ===")
+            print(f"\n=== Trying Parsing Strategy {i} ===")
+            data = strategy()
+            print("Strategy successful!")
             print(json.dumps(data, indent=2))
-            print("=== End JSON Parse Attempt ===\n")
             
-            # Validate and fix the data structure
+            # Validate and fix the data
             data = validate_and_fix_data(data)
             return data
             
         except Exception as e:
-            print(f"\n=== JSON Parse Attempt Failed ===")
-            print(f"Error: {str(e)}")
-            print("=== End JSON Parse Attempt ===\n")
+            print(f"Strategy {i} failed: {str(e)}")
             continue
     
-    print("\n=== All JSON Parse Attempts Failed ===")
-    return None
+    print("\n=== All Parsing Strategies Failed ===")
+    # Return a valid default structure as last resort
+    return {
+        "sections": [],
+        "company_info": {"name": "", "address": "", "contact": ""},
+        "client_info": {"name": "", "project_name": ""},
+        "terms": {"payment_terms": "Net 30", "validity": "30 days"},
+        "total_amount": 0
+    }
+
+def extract_template_columns(template_file):
+    """Extract column structure from Excel template"""
+    try:
+        # Handle UploadedFile object
+        if hasattr(template_file, 'getvalue'):
+            # Create a temporary file to read the Excel
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                tmp_file.write(template_file.getvalue())
+                tmp_file.flush()
+                df = pd.read_excel(tmp_file.name)
+                os.unlink(tmp_file.name)
+        else:
+            # Handle file path
+            df = pd.read_excel(template_file)
+        return list(df.columns)
+    except Exception as e:
+        print(f"Error reading template columns: {str(e)}")
+        return None
+
+def map_data_to_template_columns(quotation_data, template_columns):
+    """Map quotation data to template columns"""
+    mapped_data = []
+    
+    # Helper function to get value from nested dict
+    def get_nested_value(data, path):
+        current = data
+        for key in path:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return ""
+        return str(current)
+    
+    # Process each section and subsection
+    for section in quotation_data.get('sections', []):
+        for subsection in section.get('subsections', []):
+            for item in subsection.get('items', []):
+                row_data = {}
+                
+                # Map each template column to data
+                for col in template_columns:
+                    col_lower = col.lower()
+                    
+                    # Map common fields
+                    if 'quantity' in col_lower or 'qty' in col_lower:
+                        row_data[col] = item.get('quantity', 0)
+                    elif 'description' in col_lower or 'desc' in col_lower:
+                        row_data[col] = item.get('description', item.get('task', ''))
+                    elif 'product' in col_lower:
+                        # Extract product name from description or task
+                        description = item.get('description', item.get('task', ''))
+                        # Try to extract the main product name (usually the first part before any details)
+                        if description:
+                            # Split by common separators and take the first meaningful part
+                            parts = re.split(r'[,;:()]', description)
+                            product_name = parts[0].strip()
+                            # Remove common prefixes like "1x", "2x", etc.
+                            product_name = re.sub(r'^\d+\s*[xX]\s*', '', product_name)
+                            # Remove any remaining numbers at the start
+                            product_name = re.sub(r'^\d+\s*', '', product_name)
+                            # Capitalize first letter of each word
+                            product_name = ' '.join(word.capitalize() for word in product_name.split())
+                            row_data[col] = product_name
+                        else:
+                            row_data[col] = item.get('role', '')  # Fallback to role for labor items
+                    elif 'unit price' in col_lower or 'rate' in col_lower:
+                        row_data[col] = item.get('unit_price', item.get('rate', 0))
+                    elif 'total' in col_lower or 'price' in col_lower:
+                        row_data[col] = item.get('total_price', 0)
+                    elif 'source' in col_lower:
+                        row_data[col] = get_nested_value(item, ['source', 'document'])
+                    elif 'reference' in col_lower or 'line' in col_lower:
+                        row_data[col] = get_nested_value(item, ['source', 'line_reference'])
+                    elif 'role' in col_lower:
+                        row_data[col] = item.get('role', '')
+                    elif 'task' in col_lower:
+                        row_data[col] = item.get('task', '')
+                    elif 'hours' in col_lower:
+                        row_data[col] = item.get('hours', 0)
+                    elif 'section' in col_lower:
+                        row_data[col] = section.get('name', '')
+                    elif 'subsection' in col_lower:
+                        row_data[col] = subsection.get('name', '')
+                    else:
+                        # Try to find the value in the item
+                        row_data[col] = item.get(col, '')
+                
+                mapped_data.append(row_data)
+    
+    return mapped_data
 
 def create_excel_from_quotation(quotation_data, template=None):
     """Create an Excel file from quotation data, maintaining template structure if provided"""
@@ -819,208 +887,221 @@ def create_excel_from_quotation(quotation_data, template=None):
     # Define default columns
     default_columns = ['Qty', 'Product', 'Description', 'Price Level', 'Unit Price', 'Price', 'Source Document', 'Line Reference']
     
-    # If template is provided, create a summary sheet with template structure
-    if template:
-        print("Creating summary sheet from template")
-        # Extract template placeholders
-        placeholders = extract_template_placeholders(template)
-        
-        # Create summary sheet
-        summary_data = []
-        
-        # Add company information
-        if 'company_info' in quotation_data:
-            company_info = quotation_data['company_info']
-            if not isinstance(company_info, dict):
-                company_info = {}
-            summary_data.extend([
-                ['Company Information', ''],
-                ['Company Name', str(company_info.get('name', ''))],
-                ['Address', str(company_info.get('address', ''))],
-                ['Contact', str(company_info.get('contact', ''))],
-                ['', '']
-            ])
-        
-        # Add quotation details
-        summary_data.extend([
-            ['Quotation Details', ''],
-            ['Date', datetime.now().strftime('%Y-%m-%d')],
-            ['Quotation Number', f"Q{datetime.now().strftime('%Y%m%d%H%M')}"],
-            ['', '']
-        ])
-        
-        # Add client information
-        if 'client_info' in quotation_data:
-            client_info = quotation_data['client_info']
-            if not isinstance(client_info, dict):
-                client_info = {}
-            summary_data.extend([
-                ['Client Information', ''],
-                ['Client Name', str(client_info.get('name', ''))],
-                ['Project Name', str(client_info.get('project_name', ''))],
-                ['', '']
-            ])
-        
-        # Create summary DataFrame
-        summary_df = pd.DataFrame(summary_data)
-        summary_df.to_excel(excel_buffer, sheet_name='Summary', index=False, header=False)
-        
-        # Format summary sheet
-        summary_sheet = excel_buffer.sheets['Summary']
-        summary_sheet.set_column('A:A', 25)
-        summary_sheet.set_column('B:B', 50)
-        
-        # Apply formatting to summary sheet
-        for row in range(len(summary_data)):
-            if row == 0 or summary_data[row][0] in ['Company Information', 'Quotation Details', 'Client Information']:
-                summary_sheet.write(row, 0, summary_data[row][0], header_format)
-                summary_sheet.write(row, 1, summary_data[row][1], header_format)
+    # If template is provided, use its structure
+    if template and hasattr(template, 'name') and template.name.endswith('.xlsx'):
+        print("Using custom Excel template structure")
+        try:
+            # Handle UploadedFile object
+            if hasattr(template, 'getvalue'):
+                # Create a temporary file to read the Excel
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                    tmp_file.write(template.getvalue())
+                    tmp_file.flush()
+                    template_columns = extract_template_columns(tmp_file.name)
+                    os.unlink(tmp_file.name)
             else:
-                summary_sheet.write(row, 0, summary_data[row][0], text_format)
-                summary_sheet.write(row, 1, summary_data[row][1], text_format)
+                template_columns = extract_template_columns(template)
+            
+            if template_columns:
+                # Map data to template columns
+                mapped_data = map_data_to_template_columns(quotation_data, template_columns)
+                
+                # Create DataFrame with template columns
+                df = pd.DataFrame(mapped_data, columns=template_columns)
+                
+                # Write to Excel
+                df.to_excel(excel_buffer, sheet_name='Quotation', index=False)
+                
+                # Get the worksheet
+                worksheet = excel_buffer.sheets['Quotation']
+                
+                # Apply formatting
+                for col_num, col_name in enumerate(template_columns):
+                    # Set column width
+                    worksheet.set_column(col_num, col_num, 20)
+                    
+                    # Apply header format
+                    worksheet.write(0, col_num, col_name, header_format)
+                    
+                    # Apply appropriate format to data
+                    for row_num, value in enumerate(df[col_name], start=1):
+                        if 'price' in col_name.lower() or 'total' in col_name.lower() or 'amount' in col_name.lower():
+                            try:
+                                value = float(value)
+                                worksheet.write(row_num, col_num, value, currency_format)
+                            except (ValueError, TypeError):
+                                worksheet.write(row_num, col_num, value, text_format)
+                        elif 'quantity' in col_name.lower() or 'qty' in col_name.lower() or 'hours' in col_name.lower():
+                            try:
+                                value = float(value)
+                                worksheet.write(row_num, col_num, value, number_format)
+                            except (ValueError, TypeError):
+                                worksheet.write(row_num, col_num, value, text_format)
+                        else:
+                            worksheet.write(row_num, col_num, value, text_format)
+                
+                # Add summary information
+                summary_row = len(mapped_data) + 2
+                worksheet.write(summary_row, 0, 'Total Amount:', header_format)
+                worksheet.write(summary_row, 1, f"${quotation_data.get('total_amount', 0):,.2f}", currency_format)
+                
+                # Add terms if available
+                if 'terms' in quotation_data:
+                    terms = quotation_data['terms']
+                    worksheet.write(summary_row + 1, 0, 'Payment Terms:', header_format)
+                    worksheet.write(summary_row + 1, 1, terms.get('payment_terms', 'Net 30'), text_format)
+                    worksheet.write(summary_row + 2, 0, 'Validity:', header_format)
+                    worksheet.write(summary_row + 2, 1, terms.get('validity', '30 days'), text_format)
+        except Exception as e:
+            print(f"Error using custom template: {str(e)}")
+            print("Falling back to default structure")
+            template = None
     
-    # Create detailed sheets for each section
-    print(f"Processing {len(quotation_data['sections'])} sections")
-    for section in quotation_data['sections']:
-        print(f"\nProcessing section: {section.get('name', 'Unnamed Section')}")
-        # Create a list to store all rows for this section
-        section_rows = []
-        
-        # Add section header
-        section_rows.append([str(section.get('name', 'Unnamed Section'))] + [''] * (len(default_columns) - 1))
-        
-        # Process each subsection
-        for subsection in section.get('subsections', []):
-            print(f"Processing subsection: {subsection.get('name', 'Unnamed Subsection')}")
-            # Add subsection header
-            section_rows.append([f"  {str(subsection.get('name', 'Unnamed Subsection'))}"] + [''] * (len(default_columns) - 1))
+    # Use default structure if no template or template processing failed
+    if not template or not hasattr(template, 'name') or not template.name.endswith('.xlsx'):
+        print("Using default Excel structure")
+        # Create detailed sheets for each section
+        print(f"Processing {len(quotation_data['sections'])} sections")
+        for section in quotation_data['sections']:
+            print(f"\nProcessing section: {section.get('name', 'Unnamed Section')}")
+            # Create a list to store all rows for this section
+            section_rows = []
             
-            # Add column headers
-            section_rows.append(default_columns)
+            # Add section header
+            section_rows.append([str(section.get('name', 'Unnamed Section'))] + [''] * (len(default_columns) - 1))
             
-            # Add items
-            for item in subsection.get('items', []):
-                try:
-                    print(f"Processing item: {item.get('description', item.get('role', 'Unnamed Item'))}")
-                    if 'description' in item:
-                        # Map item data to default columns
-                        row_data = {
-                            'Qty': str(item.get('quantity', 0)),
-                            'Product': str(item.get('product', '')),
-                            'Description': str(item.get('description', '')),
-                            'Price Level': str(item.get('price_level', 'Standard')),
-                            'Unit Price': str(item.get('unit_price', 0)),
-                            'Price': str(item.get('total_price', 0)),
-                            'Source Document': str(item.get('source', {}).get('document', '')),
-                            'Line Reference': str(item.get('source', {}).get('line_reference', ''))
-                        }
-                    else:
-                        # For labor items, map to appropriate columns
-                        row_data = {
-                            'Qty': str(item.get('hours', 0)),
-                            'Product': str(item.get('role', '')),
-                            'Description': str(item.get('task', '')),
-                            'Price Level': str(item.get('price_level', 'Standard')),
-                            'Unit Price': str(item.get('rate', 0)),
-                            'Price': str(item.get('total_price', 0)),
-                            'Source Document': str(item.get('source', {}).get('document', '')),
-                            'Line Reference': str(item.get('source', {}).get('line_reference', ''))
-                        }
-                    section_rows.append([row_data[col] for col in default_columns])
-                except Exception as e:
-                    print(f"Error processing item: {str(e)}")
-                    continue
+            # Process each subsection
+            for subsection in section.get('subsections', []):
+                print(f"Processing subsection: {subsection.get('name', 'Unnamed Subsection')}")
+                # Add subsection header
+                section_rows.append([f"  {str(subsection.get('name', 'Unnamed Subsection'))}"] + [''] * (len(default_columns) - 1))
+                
+                # Add column headers
+                section_rows.append(default_columns)
+                
+                # Add items
+                for item in subsection.get('items', []):
+                    try:
+                        print(f"Processing item: {item.get('description', item.get('role', 'Unnamed Item'))}")
+                        if 'description' in item:
+                            # Map item data to default columns
+                            row_data = {
+                                'Qty': str(item.get('quantity', 0)),
+                                'Product': str(item.get('product', '')),
+                                'Description': str(item.get('description', '')),
+                                'Price Level': str(item.get('price_level', 'Standard')),
+                                'Unit Price': str(item.get('unit_price', 0)),
+                                'Price': str(item.get('total_price', 0)),
+                                'Source Document': str(item.get('source', {}).get('document', '')),
+                                'Line Reference': str(item.get('source', {}).get('line_reference', ''))
+                            }
+                        else:
+                            # For labor items, map to appropriate columns
+                            row_data = {
+                                'Qty': str(item.get('hours', 0)),
+                                'Product': str(item.get('role', '')),
+                                'Description': str(item.get('task', '')),
+                                'Price Level': str(item.get('price_level', 'Standard')),
+                                'Unit Price': str(item.get('rate', 0)),
+                                'Price': str(item.get('total_price', 0)),
+                                'Source Document': str(item.get('source', {}).get('document', '')),
+                                'Line Reference': str(item.get('source', {}).get('line_reference', ''))
+                            }
+                        section_rows.append([row_data[col] for col in default_columns])
+                    except Exception as e:
+                        print(f"Error processing item: {str(e)}")
+                        continue
+                
+                # Add blank row after subsection
+                section_rows.append([''] * len(default_columns))
             
-            # Add blank row after subsection
-            section_rows.append([''] * len(default_columns))
-        
-        if len(section_rows) <= 3:  # Only headers and no data
-            print(f"Warning: Section '{section.get('name', 'Unnamed Section')}' has no valid items")
-            continue
-        
-        # Create DataFrame for this section
-        section_df = pd.DataFrame(section_rows)
-        
-        # Write to Excel
-        sheet_name = str(section.get('name', 'Unnamed Section'))[:31]  # Excel sheet names limited to 31 chars
-        section_df.to_excel(excel_buffer, sheet_name=sheet_name, index=False, header=False)
-        
-        # Get the worksheet
-        worksheet = excel_buffer.sheets[sheet_name]
-        
-        # Set column widths based on content type
-        column_widths = {
-            'Qty': 10,
-            'Product': 30,
-            'Description': 50,
-            'Price Level': 15,
-            'Unit Price': 15,
-            'Price': 15,
-            'Source Document': 25,
-            'Line Reference': 15
-        }
-        
-        for i, col in enumerate(default_columns):
-            worksheet.set_column(i, i, column_widths[col])
-        
-        # Apply formatting
-        for row in range(len(section_rows)):
-            if row == 0:  # Section header
-                worksheet.write(row, 0, section_rows[row][0], header_format)
-            elif row == 1:  # Subsection header
-                worksheet.write(row, 0, section_rows[row][0], subheader_format)
-            elif row == 2:  # Column headers
-                for col in range(len(default_columns)):
-                    worksheet.write(row, col, section_rows[row][col], header_format)
-            elif row < len(section_rows) - 1:  # Data rows
-                for col in range(len(default_columns)):
-                    if col in [4, 5]:  # Price columns
-                        try:
-                            value = float(section_rows[row][col])
-                            worksheet.write(row, col, value, currency_format)
-                        except (ValueError, TypeError):
+            if len(section_rows) <= 3:  # Only headers and no data
+                print(f"Warning: Section '{section.get('name', 'Unnamed Section')}' has no valid items")
+                continue
+            
+            # Create DataFrame for this section
+            section_df = pd.DataFrame(section_rows)
+            
+            # Write to Excel
+            sheet_name = str(section.get('name', 'Unnamed Section'))[:31]  # Excel sheet names limited to 31 chars
+            section_df.to_excel(excel_buffer, sheet_name=sheet_name, index=False, header=False)
+            
+            # Get the worksheet
+            worksheet = excel_buffer.sheets[sheet_name]
+            
+            # Set column widths based on content type
+            column_widths = {
+                'Qty': 10,
+                'Product': 30,
+                'Description': 50,
+                'Price Level': 15,
+                'Unit Price': 15,
+                'Price': 15,
+                'Source Document': 25,
+                'Line Reference': 15
+            }
+            
+            for i, col in enumerate(default_columns):
+                worksheet.set_column(i, i, column_widths[col])
+            
+            # Apply formatting
+            for row in range(len(section_rows)):
+                if row == 0:  # Section header
+                    worksheet.write(row, 0, section_rows[row][0], header_format)
+                elif row == 1:  # Subsection header
+                    worksheet.write(row, 0, section_rows[row][0], subheader_format)
+                elif row == 2:  # Column headers
+                    for col in range(len(default_columns)):
+                        worksheet.write(row, col, section_rows[row][col], header_format)
+                elif row < len(section_rows) - 1:  # Data rows
+                    for col in range(len(default_columns)):
+                        if col in [4, 5]:  # Price columns
+                            try:
+                                value = float(section_rows[row][col])
+                                worksheet.write(row, col, value, currency_format)
+                            except (ValueError, TypeError):
+                                worksheet.write(row, col, section_rows[row][col], text_format)
+                        elif col == 0:  # Quantity column
+                            try:
+                                value = float(section_rows[row][col])
+                                worksheet.write(row, col, value, number_format)
+                            except (ValueError, TypeError):
+                                worksheet.write(row, col, section_rows[row][col], text_format)
+                        else:
                             worksheet.write(row, col, section_rows[row][col], text_format)
-                    elif col == 0:  # Quantity column
-                        try:
-                            value = float(section_rows[row][col])
-                            worksheet.write(row, col, value, number_format)
-                        except (ValueError, TypeError):
-                            worksheet.write(row, col, section_rows[row][col], text_format)
-                    else:
-                        worksheet.write(row, col, section_rows[row][col], text_format)
-    
-    # Add terms and total
-    if 'terms' in quotation_data:
-        print("\nAdding terms and total")
-        terms = quotation_data['terms']
-        if not isinstance(terms, dict):
-            terms = {}
-        terms_data = [
-            ['Terms and Conditions', ''],
-            ['Payment Terms', str(terms.get('payment_terms', 'Net 30'))],
-            ['Validity Period', str(terms.get('validity', '30 days'))],
-            ['', ''],
-            ['Total Amount', f"${quotation_data.get('total_amount', 0):,.2f}"]
-        ]
-        terms_df = pd.DataFrame(terms_data)
-        terms_df.to_excel(excel_buffer, sheet_name='Terms', index=False, header=False)
         
-        # Format terms sheet
-        terms_sheet = excel_buffer.sheets['Terms']
-        terms_sheet.set_column('A:A', 25)
-        terms_sheet.set_column('B:B', 50)
-        
-        # Apply formatting to terms sheet
-        for row in range(len(terms_data)):
-            if row == 0:
-                terms_sheet.write(row, 0, terms_data[row][0], header_format)
-                terms_sheet.write(row, 1, terms_data[row][1], header_format)
-            elif row == 4:  # Total Amount row
-                terms_sheet.write(row, 0, terms_data[row][0], header_format)
-                terms_sheet.write(row, 1, terms_data[row][1], currency_format)
-            else:
-                terms_sheet.write(row, 0, terms_data[row][0], text_format)
-                terms_sheet.write(row, 1, terms_data[row][1], text_format)
+        # Add terms and total
+        if 'terms' in quotation_data:
+            print("\nAdding terms and total")
+            terms = quotation_data['terms']
+            if not isinstance(terms, dict):
+                terms = {}
+            terms_data = [
+                ['Terms and Conditions', ''],
+                ['Payment Terms', str(terms.get('payment_terms', 'Net 30'))],
+                ['Validity Period', str(terms.get('validity', '30 days'))],
+                ['', ''],
+                ['Total Amount', f"${quotation_data.get('total_amount', 0):,.2f}"]
+            ]
+            terms_df = pd.DataFrame(terms_data)
+            terms_df.to_excel(excel_buffer, sheet_name='Terms', index=False, header=False)
+            
+            # Format terms sheet
+            terms_sheet = excel_buffer.sheets['Terms']
+            terms_sheet.set_column('A:A', 25)
+            terms_sheet.set_column('B:B', 50)
+            
+            # Apply formatting to terms sheet
+            for row in range(len(terms_data)):
+                if row == 0:
+                    terms_sheet.write(row, 0, terms_data[row][0], header_format)
+                    terms_sheet.write(row, 1, terms_data[row][1], header_format)
+                elif row == 4:  # Total Amount row
+                    terms_sheet.write(row, 0, terms_data[row][0], header_format)
+                    terms_sheet.write(row, 1, terms_data[row][1], currency_format)
+                else:
+                    terms_sheet.write(row, 0, terms_data[row][0], text_format)
+                    terms_sheet.write(row, 1, terms_data[row][1], text_format)
     
     # Save the Excel file
     print("\nSaving Excel file")
@@ -1079,7 +1160,7 @@ def display_examples():
                     st.text_area("", example['output_text'], height=200, key=f"output_text_{i}")
 
 def main():
-    st.title("Quotation Generator")
+    # st.title("Quotation Generator")
     
     # Template settings in sidebar
     st.sidebar.header("Template Settings")
@@ -1091,40 +1172,25 @@ def main():
     if template_mode == "Custom Template":
         template_file = st.sidebar.file_uploader(
             "Upload Template File",
-            type=['txt', 'docx'],
+            type=['xlsx', 'xls'],
             key="template_uploader"
         )
         if template_file:
-            template_text = extract_text_from_file(template_file, template_file.name)
-            st.session_state.template = template_text
-            st.sidebar.text_area(
-                "Template Preview",
-                template_text,
-            height=200
-        )
+            # Store the template file in session state
+            st.session_state.template = template_file
+            try:
+                # Create a temporary file to read the Excel
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                    tmp_file.write(template_file.getvalue())
+                    tmp_file.flush()
+                    df = pd.read_excel(tmp_file.name)
+                    os.unlink(tmp_file.name)
+                st.sidebar.write("Template Columns:")
+                st.sidebar.write(df.columns.tolist())
+            except Exception as e:
+                st.error(f"Error reading template: {str(e)}")
     else:
-        st.session_state.template = """[COMPANY_NAME]
-[ADDRESS]
-[CONTACT_INFO]
-
-QUOTATION
-
-Date: [DATE]
-Quotation #: [QUOTE_NUMBER]
-
-Dear [CLIENT_NAME],
-
-Thank you for your interest in our services. Please find below our quotation for [PROJECT_NAME]:
-
-[PROJECT_DETAILS]
-
-Total Amount: [AMOUNT]
-Payment Terms: [PAYMENT_TERMS]
-Validity: [VALIDITY_PERIOD]
-
-Best regards,
-[YOUR_NAME]
-[YOUR_POSITION]"""
+        st.session_state.template = None
     
     # Main chat interface container
     chat_container = st.container()
@@ -1341,12 +1407,15 @@ Best regards,
                                     try:
                                         with open(excel_file, 'rb') as f:
                                             excel_data = f.read()
+                                            # Use a unique key for the download button to prevent reload
+                                            download_key = f"download_btn_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                                             st.download_button(
                                                 label="📥 Download Quotation (Excel)",
                                                 data=excel_data,
                                                 file_name=f"quotation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                                use_container_width=True
+                                                use_container_width=True,
+                                                key=download_key
                                             )
                                     except Exception as e:
                                         st.error(f"Error creating download button: {str(e)}")
@@ -1355,7 +1424,6 @@ Best regards,
                                 st.error(f"Error creating Excel file: {str(e)}")
                                 with tab2:
                                     st.text_area("Raw AI Response", response_text, height=300)
-                            
                         except Exception as e:
                             st.error(f"Error parsing the AI response: {str(e)}")
                             with tab2:
