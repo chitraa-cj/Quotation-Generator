@@ -72,6 +72,12 @@ if 'vector_store' not in st.session_state:
     st.session_state.vector_store = None
 if 'template' not in st.session_state:
     st.session_state.template = None
+if 'current_quotation_data' not in st.session_state:
+    st.session_state.current_quotation_data = None
+if 'current_excel_file' not in st.session_state:
+    st.session_state.current_excel_file = None
+if 'current_uploaded_files' not in st.session_state:
+    st.session_state.current_uploaded_files = None
 
 def initialize_model():
     model = genai.GenerativeModel('gemini-2.0-flash')
@@ -1272,6 +1278,13 @@ def main():
             accept_multiple_files=True,
             key="current_input_uploader_chat"
         )
+        
+        # Check if files have changed
+        if uploaded_files != st.session_state.current_uploaded_files:
+            st.session_state.current_uploaded_files = uploaded_files
+            st.session_state.current_quotation_data = None
+            st.session_state.current_excel_file = None
+        
         if uploaded_files and st.button("Generate Quotation", key="generate_quotation_btn_chat"):
             # Create tabs for different views immediately
             tab1, tab2, tab3 = st.tabs(["Excel Preview", "JSON Data", "Download"])
@@ -1364,6 +1377,9 @@ def main():
                                     st.text_area("Raw AI Response", response_text, height=300)
                                 return
                             
+                            # Store quotation data in session state
+                            st.session_state.current_quotation_data = quotation_data
+                            
                             # Show JSON data immediately in a formatted way
                             with tab2:
                                 st.json(quotation_data, expanded=True)
@@ -1371,6 +1387,9 @@ def main():
                             # Generate Excel file
                             try:
                                 excel_file = create_excel_from_quotation(quotation_data, st.session_state.template)
+                                
+                                # Store Excel file in session state
+                                st.session_state.current_excel_file = excel_file
                                 
                                 # Show Excel preview with proper formatting
                                 with tab1:
@@ -1441,6 +1460,60 @@ def main():
                 else:
                     with tab2:
                         st.text_area("Raw AI Response", "No response generated", height=300)
+        elif st.session_state.current_quotation_data and st.session_state.current_excel_file:
+            # Display existing quotation if available
+            tab1, tab2, tab3 = st.tabs(["Excel Preview", "JSON Data", "Download"])
+            
+            # Show JSON data
+            with tab2:
+                st.json(st.session_state.current_quotation_data, expanded=True)
+            
+            # Show Excel preview
+            with tab1:
+                try:
+                    df = pd.read_excel(st.session_state.current_excel_file, sheet_name=None)
+                    if not df:
+                        st.error("Failed to read the generated Excel file.")
+                        return
+                    
+                    for sheet_name, sheet_df in df.items():
+                        st.subheader(sheet_name)
+                        if not sheet_df.empty:
+                            # Format numeric columns
+                            for col in sheet_df.columns:
+                                if 'Price' in col or 'Amount' in col:
+                                    sheet_df[col] = pd.to_numeric(sheet_df[col], errors='coerce')
+                                elif 'Qty' in col or 'Quantity' in col:
+                                    sheet_df[col] = pd.to_numeric(sheet_df[col], errors='coerce')
+                            
+                            # Display the dataframe with proper formatting
+                            st.dataframe(
+                                sheet_df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                        else:
+                            st.warning(f"Sheet '{sheet_name}' is empty.")
+                except Exception as e:
+                    st.error(f"Error displaying Excel preview: {str(e)}")
+            
+            # Show download button
+            with tab3:
+                try:
+                    with open(st.session_state.current_excel_file, 'rb') as f:
+                        excel_data = f.read()
+                        # Use a unique key for the download button to prevent reload
+                        download_key = f"download_btn_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        st.download_button(
+                            label="📥 Download Quotation (Excel)",
+                            data=excel_data,
+                            file_name=f"quotation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                            key=download_key
+                        )
+                except Exception as e:
+                    st.error(f"Error creating download button: {str(e)}")
     
     with add_example_col:
         if st.button("Add Example", key="add_example_btn_fab"):
