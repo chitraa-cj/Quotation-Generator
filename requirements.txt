@@ -15,3 +15,5 @@ xlsxwriter
 langchain-community
 protobuf
 chromadb==0.4.24
+json5==0.9.14
+demjson3==3.0.6

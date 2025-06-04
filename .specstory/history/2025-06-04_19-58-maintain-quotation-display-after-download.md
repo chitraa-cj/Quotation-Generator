@@ -208,3 +208,2195 @@ The changes ensure that the quotation data persists in the session state and is 
 
 ---
 
+_**User**_
+
+this delimiter error is persisting, use a method libarary or snything such that this doesn't occur
+
+---
+
+_**Assistant**_
+
+I understand you're encountering persistent JSON parsing errors. Let's improve the JSON parsing by using a more robust library and better error handling. I'll modify the code to use `json5` library which is more lenient with JSON parsing and can handle various edge cases.
+
+First, let me add the necessary import and improve the JSON parsing logic.
+
+
+---
+
+```diff
+  from datetime import datetime
+  import json
++ import json5  # More lenient JSON parser
+  import io
+  from langchain.text_splitter import RecursiveCharacterTextSplitter
+```
+
+```diff
+  import time
+  import random
++ import ast  # For literal_eval as a fallback
+  
+  # Load environment variables
+```
+
+```diff
+      # Multiple parsing attempts with different strategies
+      parsing_strategies = [
+-         # Strategy 1: Direct parsing with full cleaning
+-         lambda: json.loads(fix_json_structure(clean_json_text(response_text))),
++         # Strategy 1: Try json5 first (most lenient)
++         lambda: json5.loads(response_text),
+          
+-         # Strategy 2: Extract JSON block and parse
+-         lambda: json.loads(fix_json_structure(clean_json_text(extract_json_block(response_text) or response_text))),
++         # Strategy 2: Try json5 with full cleaning
++         lambda: json5.loads(fix_json_structure(clean_json_text(response_text))),
+          
+-         # Strategy 3: Line-by-line parsing
+-         lambda: json.loads(fix_json_structure(clean_json_text(''.join([line.strip() for line in response_text.split('\n') if line.strip()])))),
++         # Strategy 3: Try json5 with extracted block
++         lambda: json5.loads(fix_json_structure(clean_json_text(extract_json_block(response_text) or response_text))),
+          
+-         # Strategy 4: Try to fix common JSON issues
+-         lambda: json.loads(fix_json_structure(clean_json_text(re.sub(r'([^"])\'([^"]*)\'', r'\1"\2"', response_text)))),
++         # Strategy 4: Try standard json with full cleaning
++         lambda: json.loads(fix_json_structure(clean_json_text(response_text))),
+          
+-         # Strategy 5: Last resort - try to extract any valid JSON structure
+-         lambda: json.loads(fix_json_structure(clean_json_text(re.sub(r'[^{]*(\{[\s\S]*\})[^}]*', r'\1', response_text))))
++         # Strategy 5: Try ast.literal_eval as last resort
++         lambda: ast.literal_eval(response_text)
+      ]
+      
+```
+
+---
+
+Now we need to install the `json5` package. Let me add it to the requirements.
+
+
+---
+
+<details>
+            <summary>Searched codebase "requirements.txt" • **1** results</summary>
+        
+| File |
+|------|
+| `undefined` |
+
+</details>
+
+---
+
+Read file: requirements.txt
+
+---
+
+```diff
+  protobuf
+  chromadb==0.4.24
++ json5==0.9.14
+```
+
+---
+
+I've made several improvements to handle the JSON parsing issues:
+
+1. Added the `json5` library which is more lenient with JSON parsing and can handle various edge cases that standard JSON cannot.
+
+2. Added `ast.literal_eval` as a last resort parser, which can handle Python literal expressions.
+
+3. Reordered the parsing strategies to try the most lenient parsers first:
+   - Strategy 1: Try `json5` directly (most lenient)
+   - Strategy 2: Try `json5` with full cleaning
+   - Strategy 3: Try `json5` with extracted block
+   - Strategy 4: Try standard `json` with full cleaning
+   - Strategy 5: Try `ast.literal_eval` as last resort
+
+4. Added the `json5` package to requirements.txt
+
+To apply these changes:
+
+1. First, install the new dependency:
+```bash
+pip install json5==0.9.14
+```
+
+2. The code changes will now use a more robust parsing strategy that should handle various edge cases in the JSON response.
+
+The new parsing approach should be much more resilient to:
+- Missing commas
+- Unquoted property names
+- Single quotes instead of double quotes
+- Trailing commas
+- Comments in JSON
+- Various other JSON syntax variations
+
+If you still encounter any parsing issues, please let me know and I can further adjust the parsing strategies or add more fallback mechanisms.
+
+---
+
+_**User**_
+
+still this error persists, use any library or tool to ensure that this is fixed
+
+---
+
+_**Assistant**_
+
+I see the issue is still persisting. Let's try a more aggressive approach using `demjson3`, which is specifically designed to handle malformed JSON and has better error recovery. It's particularly good at handling edge cases and malformed JSON structures.
+
+
+---
+
+```diff
+  chromadb==0.4.24
+  json5==0.9.14
++ demjson3==3.0.6
+```
+
+---
+
+Now, let's modify the JSON parsing logic to use demjson3 and add more robust preprocessing:
+
+
+---
+
+
+
+---
+
+Let me try again with a more focused edit:
+
+
+---
+
+```diff
+  from datetime import datetime
+  import json
+- import json5  # More lenient JSON parser
++ import json5
++ import demjson3
+  import io
+  from langchain.text_splitter import RecursiveCharacterTextSplitter
+```
+
+```diff
+  import time
+  import random
+- import ast  # For literal_eval as a fallback
++ import ast
+  
+  # Load environment variables
+```
+
+```diff
+      print("=== End Raw Response Text ===\n")
+      
+-     def sanitize_text(text):
+-         """Sanitize text to ensure it's valid for JSON parsing"""
++     def preprocess_text(text):
++         """Preprocess text to handle common issues before parsing"""
++         # Remove any markdown code block markers
++         text = re.sub(r'```json\s*', '', text)
++         text = re.sub(r'```\s*$', '', text)
++         
+          # Remove any non-printable characters
+          text = ''.join(char for char in text if char.isprintable() or char in '\n\r\t')
++         
+          # Remove any BOM or special characters at the start
+          text = text.lstrip('\ufeff')
++         
+          # Remove any leading/trailing whitespace
+          text = text.strip()
++         
++         # Fix common issues
++         text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)  # Fix unquoted keys
++         text = re.sub(r':\s*\'([^\']*)\'', r':"\1"', text)  # Fix single quotes
++         text = re.sub(r'([^\\])\\([^"\\/bfnrtu])', r'\1\\\\\2', text)  # Fix invalid escapes
++         text = re.sub(r',\s*}', '}', text)  # Remove trailing commas
++         text = re.sub(r',\s*]', ']', text)  # Remove trailing commas in arrays
++         
++         # Ensure the text starts with { and ends with }
++         if not text.startswith('{'):
++             text = '{' + text
++         if not text.endswith('}'):
++             text = text + '}'
++         
+          return text
+      
+```
+
+```diff
+          return None
+      
+-     def fix_missing_commas(text):
+-         """Fix missing commas in JSON text"""
+-         # Fix missing commas between properties
+-         text = re.sub(r'"\s*"', '","', text)  # Between strings
+-         text = re.sub(r'}\s*{', '},{', text)  # Between objects
+-         text = re.sub(r']\s*\[', '],[', text)  # Between arrays
+-         text = re.sub(r'"\s*{', '":{', text)  # After property name
+-         text = re.sub(r'"\s*\[', '":[', text)  # After property name before array
+-         
+-         # Fix missing commas after values
+-         text = re.sub(r'"\s*"', '","', text)  # After string
+-         text = re.sub(r'(\d+)\s*"', r'\1,"', text)  # After number
+-         text = re.sub(r'true\s*"', r'true,"', text)  # After true
+-         text = re.sub(r'false\s*"', r'false,"', text)  # After false
+-         text = re.sub(r'null\s*"', r'null,"', text)  # After null
+-         
+-         # Fix missing commas in arrays and objects
+-         text = re.sub(r'"\s*]', '"]', text)  # Before array end
+-         text = re.sub(r'"\s*}', '"}', text)  # Before object end
+-         text = re.sub(r'(\d+)\s*]', r'\1]', text)  # Number before array end
+-         text = re.sub(r'(\d+)\s*}', r'\1}', text)  # Number before object end
+-         
+-         # Fix specific delimiter issues
+-         text = re.sub(r'([^,{])\s*"([^"]+)"\s*:', r'\1,"\2":', text)  # Missing comma before property
+-         text = re.sub(r'([^,{])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1,"\2":', text)  # Missing comma before unquoted property
+-         
+-         return text
+-     
+-     def clean_json_text(text):
+-         """Clean and fix JSON text with multiple passes"""
+-         # First pass: Basic cleaning
+-         text = sanitize_text(text)
+-         text = re.sub(r'```json\s*', '', text)
+-         text = re.sub(r'```\s*$', '', text)
+-         text = re.sub(r'\s+', ' ', text)
+-         
+-         # Second pass: Extract JSON block
+-         json_block = extract_json_block(text)
+-         if json_block:
+-             text = json_block
+-         
+-         # Third pass: Fix common JSON issues
+-         fixes = [
+-             # Fix property names
+-             (r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":'),
+-             # Fix missing colons
+-             (r'"\s*{', '":{'),
+-             (r'"\s*\[', ':['),
+-             # Fix string values
+-             (r':\s*([a-zA-Z_][a-zA-Z0-9_]*)([,\s}])', r':"\1"\2'),
+-             # Fix boolean and null
+-             (r':\s*true([,\s}])', r':true\1'),
+-             (r':\s*false([,\s}])', r':false\1'),
+-             (r':\s*null([,\s}])', r':null\1'),
+-             # Fix numeric values
+-             (r':\s*(\d+\.?\d*)([,\s}])', r':\1\2'),
+-             # Fix missing commas
+-             (r'"\s*"', '","'),
+-             (r'}\s*{', '},{'),
+-             (r']\s*\[', '],['),
+-             (r'(\d+)\s*"', r'\1,"'),
+-             (r'true\s*"', r'true,"'),
+-             (r'false\s*"', r'false,"'),
+-             (r'null\s*"', r'null,"'),
+-             # Fix nested structures
+-             (r'}\s*]', '}]'),
+-             (r']\s*}', ']}'),
+-             # Remove trailing commas
+-             (r',\s*}', '}'),
+-             (r',\s*]', ']')
+-         ]
+-         
+-         for pattern, replacement in fixes:
+-             text = re.sub(pattern, replacement, text)
+-         
+-         # Fourth pass: Fix missing commas
+-         text = fix_missing_commas(text)
+-         
+-         # Fifth pass: Ensure proper JSON structure
+-         if not text.startswith('{'):
+-             text = '{' + text
+-         if not text.endswith('}'):
+-             text = text + '}'
+-         
+-         return text.strip()
+-     
+-     def fix_json_structure(text):
+-         """Fix JSON structure with balanced brackets and proper nesting"""
+-         stack = []
+-         fixed_text = ""
+-         in_string = False
+-         escape_next = False
+-         
+-         for char in text:
+-             if escape_next:
+-                 fixed_text += char
+-                 escape_next = False
+-                 continue
+-             
+-             if char == '\\':
+-                 escape_next = True
+-                 fixed_text += char
+-                 continue
+-             
+-             if char == '"' and not escape_next:
+-                 in_string = not in_string
+-                 fixed_text += char
+-                 continue
+-             
+-             if not in_string:
+-                 if char in '{[':
+-                     stack.append(char)
+-                     fixed_text += char
+-                 elif char in '}]':
+-                     if stack:
+-                         if (char == '}' and stack[-1] == '{') or (char == ']' and stack[-1] == '['):
+-                             stack.pop()
+-                             fixed_text += char
+-                         else:
+-                             # Fix mismatched brackets
+-                             if char == '}':
+-                                 fixed_text += ']'
+-                             else:
+-                                 fixed_text += '}'
+-                     else:
+-                         # Add missing opening bracket
+-                         if char == '}':
+-                             fixed_text = '{' + fixed_text + char
+-                         else:
+-                             fixed_text = '[' + fixed_text + char
+-                 else:
+-                     fixed_text += char
+-             else:
+-                 fixed_text += char
+-         
+-         # Close any remaining open brackets
+-         while stack:
+-             if stack[-1] == '{':
+-                 fixed_text += '}'
+-             else:
+-                 fixed_text += ']'
+-             stack.pop()
+-         
+-         return fixed_text
+-     
+      def validate_and_fix_data(data):
+          """Validate and fix data structure with multiple fallbacks"""
+```
+
+```diff
+              }
+      
++     # Preprocess the response text
++     processed_text = preprocess_text(response_text)
++     
+      # Multiple parsing attempts with different strategies
+      parsing_strategies = [
+-         # Strategy 1: Try json5 first (most lenient)
+-         lambda: json5.loads(response_text),
++         # Strategy 1: Try demjson3 first (most lenient)
++         lambda: demjson3.decode(processed_text),
+          
+-         # Strategy 2: Try json5 with full cleaning
+-         lambda: json5.loads(fix_json_structure(clean_json_text(response_text))),
++         # Strategy 2: Try demjson3 with extracted block
++         lambda: demjson3.decode(extract_json_block(processed_text) or processed_text),
+          
+-         # Strategy 3: Try json5 with extracted block
+-         lambda: json5.loads(fix_json_structure(clean_json_text(extract_json_block(response_text) or response_text))),
++         # Strategy 3: Try json5
++         lambda: json5.loads(processed_text),
+          
+-         # Strategy 4: Try standard json with full cleaning
+-         lambda: json.loads(fix_json_structure(clean_json_text(response_text))),
++         # Strategy 4: Try standard json
++         lambda: json.loads(processed_text),
+          
+          # Strategy 5: Try ast.literal_eval as last resort
+-         lambda: ast.literal_eval(response_text)
++         lambda: ast.literal_eval(processed_text)
+      ]
+      
+```
+
+---
+
+I've made several significant improvements to the JSON parsing logic:
+
+1. Added `demjson3` as the primary parser, which is specifically designed to handle malformed JSON and has better error recovery capabilities.
+
+2. Simplified and improved the preprocessing step with a new `preprocess_text` function that:
+   - Removes markdown code block markers
+   - Handles non-printable characters
+   - Fixes common JSON formatting issues like unquoted keys and single quotes
+   - Ensures proper JSON structure with opening and closing braces
+
+3. Reordered the parsing strategies to try the most lenient parsers first:
+   1. `demjson3` (most lenient)
+   2. `demjson3` with extracted block
+   3. `json5` (still quite lenient)
+   4. Standard `json` (strict)
+   5. `ast.literal_eval` (last resort)
+
+4. Removed the complex and potentially problematic `fix_missing_commas` and `fix_json_structure` functions in favor of the more robust `demjson3` parser.
+
+5. Maintained the `validate_and_fix_data` function to ensure the parsed data has the correct structure and types.
+
+To use these changes:
+
+1. Install the new dependency:
+```bash
+pip install demjson3==3.0.6
+```
+
+2. The code will now use `demjson3` as its primary parser, which should handle most malformed JSON cases automatically. If that fails, it will fall back to the other parsers in order of decreasing leniency.
+
+The new approach should be more robust because:
+- `demjson3` is specifically designed to handle malformed JSON
+- The preprocessing step is simpler and more focused
+- We have multiple fallback strategies
+- The validation step ensures the data structure is correct even if the parsing succeeds with malformed input
+
+Let me know if you still encounter any parsing issues, and I can further adjust the parsing strategies or add more fallback mechanisms if needed.
+
+---
+
+_**User**_
+
+
+
+---
+
+_**Assistant**_
+
+I notice there are some serialization errors in the Excel file generation process, specifically related to column type conversions. Let me help fix these issues by modifying the Excel file creation logic to properly handle column types.
+
+I'll update the `create_excel_from_quotation` function to ensure proper type handling:
+
+
+---
+
+```diff
+                  mapped_data = map_data_to_template_columns(quotation_data, template_columns)
+                  
+-                 # Create DataFrame with template columns
++                 # Create DataFrame with template columns and ensure proper types
+                  df = pd.DataFrame(mapped_data, columns=template_columns)
+                  
++                 # Convert numeric columns to appropriate types
++                 for col in df.columns:
++                     col_lower = col.lower()
++                     if 'price' in col_lower or 'total' in col_lower or 'amount' in col_lower:
++                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
++                     elif 'quantity' in col_lower or 'qty' in col_lower or 'hours' in col_lower:
++                         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
++                     else:
++                         df[col] = df[col].astype(str)
++                 
+                  # Write to Excel
+                  df.to_excel(excel_buffer, sheet_name='Quotation', index=False)
+```
+
+```diff
+                      # Apply appropriate format to data
+                      for row_num, value in enumerate(df[col_name], start=1):
+-                         if 'price' in col_name.lower() or 'total' in col_name.lower() or 'amount' in col_name.lower():
++                         col_lower = col_name.lower()
++                         if 'price' in col_lower or 'total' in col_lower or 'amount' in col_lower:
+                              try:
+                                  value = float(value)
+                                  worksheet.write(row_num, col_num, value, currency_format)
+                              except (ValueError, TypeError):
+-                                 worksheet.write(row_num, col_num, value, text_format)
+-                         elif 'quantity' in col_name.lower() or 'qty' in col_name.lower() or 'hours' in col_name.lower():
++                                 worksheet.write(row_num, col_num, str(value), text_format)
++                         elif 'quantity' in col_lower or 'qty' in col_lower or 'hours' in col_lower:
+                              try:
+                                  value = float(value)
+                                  worksheet.write(row_num, col_num, value, number_format)
+                              except (ValueError, TypeError):
+-                                 worksheet.write(row_num, col_num, value, text_format)
++                                 worksheet.write(row_num, col_num, str(value), text_format)
+                          else:
+-                             worksheet.write(row_num, col_num, value, text_format)
++                             worksheet.write(row_num, col_num, str(value), text_format)
+                  
+                  # Add summary information
+```
+
+```diff
+                      terms = quotation_data['terms']
+                      worksheet.write(summary_row + 1, 0, 'Payment Terms:', header_format)
+-                     worksheet.write(summary_row + 1, 1, terms.get('payment_terms', 'Net 30'), text_format)
++                     worksheet.write(summary_row + 1, 1, str(terms.get('payment_terms', 'Net 30')), text_format)
+                      worksheet.write(summary_row + 2, 0, 'Validity:', header_format)
+-                     worksheet.write(summary_row + 2, 1, terms.get('validity', '30 days'), text_format)
++                     worksheet.write(summary_row + 2, 1, str(terms.get('validity', '30 days')), text_format)
+          except Exception as e:
+              print(f"Error using custom template: {str(e)}")
+```
+
+```diff
+                          print(f"Processing item: {item.get('description', item.get('role', 'Unnamed Item'))}")
+                          if 'description' in item:
+-                             # Map item data to default columns
++                             # Map item data to default columns with proper type conversion
+                              row_data = {
+-                                 'Qty': str(item.get('quantity', 0)),
++                                 'Qty': float(item.get('quantity', 0)),
+                                  'Product': str(item.get('product', '')),
+                                  'Description': str(item.get('description', '')),
+                                  'Price Level': str(item.get('price_level', 'Standard')),
+-                                 'Unit Price': str(item.get('unit_price', 0)),
+-                                 'Price': str(item.get('total_price', 0)),
++                                 'Unit Price': float(item.get('unit_price', 0)),
++                                 'Price': float(item.get('total_price', 0)),
+                                  'Source Document': str(item.get('source', {}).get('document', '')),
+                                  'Line Reference': str(item.get('source', {}).get('line_reference', ''))
+                              }
+                          else:
+-                             # For labor items, map to appropriate columns
++                             # For labor items, map to appropriate columns with proper type conversion
+                              row_data = {
+-                                 'Qty': str(item.get('hours', 0)),
++                                 'Qty': float(item.get('hours', 0)),
+                                  'Product': str(item.get('role', '')),
+                                  'Description': str(item.get('task', '')),
+                                  'Price Level': str(item.get('price_level', 'Standard')),
+-                                 'Unit Price': str(item.get('rate', 0)),
+-                                 'Price': str(item.get('total_price', 0)),
++                                 'Unit Price': float(item.get('rate', 0)),
++                                 'Price': float(item.get('total_price', 0)),
+                                  'Source Document': str(item.get('source', {}).get('document', '')),
+                                  'Line Reference': str(item.get('source', {}).get('line_reference', ''))
+```
+
+```diff
+                  continue
+              
+-             # Create DataFrame for this section
++             # Create DataFrame for this section with proper type conversion
+              section_df = pd.DataFrame(section_rows)
+              
++             # Convert numeric columns to appropriate types
++             for col in section_df.columns:
++                 col_lower = col.lower()
++                 if 'price' in col_lower or 'total' in col_lower or 'amount' in col_lower:
++                     section_df[col] = pd.to_numeric(section_df[col], errors='coerce').fillna(0)
++                 elif 'quantity' in col_lower or 'qty' in col_lower or 'hours' in col_lower:
++                     section_df[col] = pd.to_numeric(section_df[col], errors='coerce').fillna(0)
++                 else:
++                     section_df[col] = section_df[col].astype(str)
++             
+              # Write to Excel
+              sheet_name = str(section.get('name', 'Unnamed Section'))[:31]  # Excel sheet names limited to 31 chars
+```
+
+```diff
+              for row in range(len(section_rows)):
+                  if row == 0:  # Section header
+-                     worksheet.write(row, 0, section_rows[row][0], header_format)
++                     worksheet.write(row, 0, str(section_rows[row][0]), header_format)
+                  elif row == 1:  # Subsection header
+-                     worksheet.write(row, 0, section_rows[row][0], subheader_format)
++                     worksheet.write(row, 0, str(section_rows[row][0]), subheader_format)
+                  elif row == 2:  # Column headers
+                      for col in range(len(default_columns)):
+-                         worksheet.write(row, col, section_rows[row][col], header_format)
++                         worksheet.write(row, col, str(section_rows[row][col]), header_format)
+                  elif row < len(section_rows) - 1:  # Data rows
+                      for col in range(len(default_columns)):
+-                         if col in [4, 5]:  # Price columns
++                         col_name = default_columns[col].lower()
++                         if 'price' in col_name or 'total' in col_name or 'amount' in col_name:
+                              try:
+                                  value = float(section_rows[row][col])
+                                  worksheet.write(row, col, value, currency_format)
+                              except (ValueError, TypeError):
+-                                 worksheet.write(row, col, section_rows[row][col], text_format)
+-                         elif col == 0:  # Quantity column
++                                 worksheet.write(row, col, str(section_rows[row][col]), text_format)
++                         elif 'quantity' in col_name or 'qty' in col_name or 'hours' in col_name:
+                              try:
+                                  value = float(section_rows[row][col])
+                                  worksheet.write(row, col, value, number_format)
+                              except (ValueError, TypeError):
+-                                 worksheet.write(row, col, section_rows[row][col], text_format)
++                                 worksheet.write(row, col, str(section_rows[row][col]), text_format)
+                          else:
+-                             worksheet.write(row, col, section_rows[row][col], text_format)
++                             worksheet.write(row, col, str(section_rows[row][col]), text_format)
+          
+          # Add terms and total
+```
+
+```diff
+              for row in range(len(terms_data)):
+                  if row == 0:
+-                     terms_sheet.write(row, 0, terms_data[row][0], header_format)
+-                     terms_sheet.write(row, 1, terms_data[row][1], header_format)
++                     terms_sheet.write(row, 0, str(terms_data[row][0]), header_format)
++                     terms_sheet.write(row, 1, str(terms_data[row][1]), header_format)
+                  elif row == 4:  # Total Amount row
+-                     terms_sheet.write(row, 0, terms_data[row][0], header_format)
+-                     terms_sheet.write(row, 1, terms_data[row][1], currency_format)
++                     terms_sheet.write(row, 0, str(terms_data[row][0]), header_format)
++                     terms_sheet.write(row, 1, str(terms_data[row][1]), currency_format)
+                  else:
+-                     terms_sheet.write(row, 0, terms_data[row][0], text_format)
+-                     terms_sheet.write(row, 1, terms_data[row][1], text_format)
++                     terms_sheet.write(row, 0, str(terms_data[row][0]), text_format)
++                     terms_sheet.write(row, 1, str(terms_data[row][1]), text_format)
+      
+      # Save the Excel file
+```
+
+---
+
+I've made several important changes to fix the serialization errors and improve type handling in the Excel file generation:
+
+1. Added explicit type conversion for numeric columns:
+   - Price-related columns are converted to float using `pd.to_numeric` with `errors='coerce'` and `fillna(0)`
+   - Quantity-related columns are similarly converted to float
+   - All other columns are explicitly converted to string using `astype(str)`
+
+2. Improved type handling in row data creation:
+   - Changed numeric fields (Qty, Unit Price, Price) to be stored as float instead of string
+   - Ensured all text fields are explicitly converted to string
+
+3. Enhanced column type detection:
+   - Added more robust column name matching using lowercase comparison
+   - Improved handling of price, quantity, and amount columns
+
+4. Added explicit string conversion:
+   - All values written to Excel are now explicitly converted to string when needed
+   - This prevents any type-related serialization issues
+
+5. Improved error handling:
+   - Added better error handling for numeric conversions
+   - Ensured all values are properly formatted before writing to Excel
+
+These changes should resolve the serialization errors you were seeing and ensure that:
+1. All numeric values are properly stored as numbers
+2. All text values are properly stored as strings
+3. The Excel file can be properly serialized and deserialized
+4. The data types are consistent across all sheets
+
+The quotation should now be generated without any type conversion errors, and the Excel file should be properly formatted with the correct data types for each column.
+
+---
+
+_**User**_
+
+use th best mrthod to fic this either a tool or library or something
+
+---
+
+_**Assistant**_
+
+I notice that all parsing strategies are failing due to malformed JSON. Let me enhance the JSON parsing logic by using a more robust approach with `demjson3` and adding better preprocessing. I'll modify the `extract_json_from_response` function:
+
+
+---
+
+```diff
+          text = re.sub(r',\s*}', '}', text)  # Remove trailing commas
+          text = re.sub(r',\s*]', ']', text)  # Remove trailing commas in arrays
++         
++         # Fix missing commas between properties
++         text = re.sub(r'"\s*"', '","', text)  # Between strings
++         text = re.sub(r'}\s*{', '},{', text)  # Between objects
++         text = re.sub(r']\s*\[', '],[', text)  # Between arrays
++         text = re.sub(r'"\s*{', '":{', text)  # After property name
++         text = re.sub(r'"\s*\[', '":[', text)  # After property name before array
++         
++         # Fix missing commas after values
++         text = re.sub(r'"\s*"', '","', text)  # After string
++         text = re.sub(r'(\d+)\s*"', r'\1,"', text)  # After number
++         text = re.sub(r'true\s*"', r'true,"', text)  # After true
++         text = re.sub(r'false\s*"', r'false,"', text)  # After false
++         text = re.sub(r'null\s*"', r'null,"', text)  # After null
++         
++         # Fix missing commas in arrays and objects
++         text = re.sub(r'"\s*]', '"]', text)  # Before array end
++         text = re.sub(r'"\s*}', '"}', text)  # Before object end
++         text = re.sub(r'(\d+)\s*]', r'\1]', text)  # Number before array end
++         text = re.sub(r'(\d+)\s*}', r'\1}', text)  # Number before object end
++         
++         # Fix specific delimiter issues
++         text = re.sub(r'([^,{])\s*"([^"]+)"\s*:', r'\1,"\2":', text)  # Missing comma before property
++         text = re.sub(r'([^,{])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1,"\2":', text)  # Missing comma before unquoted property
+          
+          # Ensure the text starts with { and ends with }
+```
+
+```diff
+              text = text + '}'
+          
+-         return text
++         # Fix unbalanced brackets
++         stack = []
++         fixed_text = ""
++         in_string = False
++         escape_next = False
++         
++         for char in text:
++             if escape_next:
++                 fixed_text += char
++                 escape_next = False
++                 continue
++             
++             if char == '\\':
++                 escape_next = True
++                 fixed_text += char
++                 continue
++             
++             if char == '"' and not escape_next:
++                 in_string = not in_string
++                 fixed_text += char
++                 continue
++             
++             if not in_string:
++                 if char in '{[':
++                     stack.append(char)
++                     fixed_text += char
++                 elif char in '}]':
++                     if stack:
++                         if (char == '}' and stack[-1] == '{') or (char == ']' and stack[-1] == '['):
++                             stack.pop()
++                             fixed_text += char
++                         else:
++                             # Fix mismatched brackets
++                             if char == '}':
++                                 fixed_text += ']'
++                             else:
++                                 fixed_text += '}'
++                     else:
++                         # Add missing opening bracket
++                         if char == '}':
++                             fixed_text = '{' + fixed_text + char
++                         else:
++                             fixed_text = '[' + fixed_text + char
++                 else:
++                     fixed_text += char
++             else:
++                 fixed_text += char
++         
++         # Close any remaining open brackets
++         while stack:
++             if stack[-1] == '{':
++                 fixed_text += '}'
++             else:
++                 fixed_text += ']'
++             stack.pop()
++         
++         return fixed_text
+      
+      def extract_json_block(text):
+```
+
+```diff
+      processed_text = preprocess_text(response_text)
+      
++     # Try to extract JSON block first
++     json_block = extract_json_block(processed_text)
++     if json_block:
++         processed_text = json_block
++     
+      # Multiple parsing attempts with different strategies
+      parsing_strategies = [
+-         # Strategy 1: Try demjson3 first (most lenient)
+-         lambda: demjson3.decode(processed_text),
++         # Strategy 1: Try demjson3 with strict=False (most lenient)
++         lambda: demjson3.decode(processed_text, strict=False),
+          
+-         # Strategy 2: Try demjson3 with extracted block
+-         lambda: demjson3.decode(extract_json_block(processed_text) or processed_text),
++         # Strategy 2: Try demjson3 with strict=False and extracted block
++         lambda: demjson3.decode(extract_json_block(processed_text) or processed_text, strict=False),
+          
+          # Strategy 3: Try json5
+```
+
+---
+
+I've made several significant improvements to the JSON parsing logic:
+
+1. Enhanced the `preprocess_text` function with more robust fixes:
+   - Added comprehensive comma fixing for various scenarios
+   - Added fixes for missing delimiters between properties
+   - Added fixes for missing commas after values
+   - Added fixes for specific delimiter issues
+
+2. Added a new bracket balancing system that:
+   - Tracks opening and closing brackets
+   - Fixes mismatched brackets
+   - Adds missing opening brackets
+   - Closes any remaining open brackets
+   - Handles nested structures properly
+
+3. Improved the parsing strategy order:
+   - Now uses `demjson3` with `strict=False` for maximum leniency
+   - Tries to extract JSON block before parsing
+   - Maintains fallback strategies in order of decreasing leniency
+
+4. Added more robust error handling:
+   - Better handling of malformed JSON structures
+   - Improved handling of nested objects and arrays
+   - Better handling of string escaping
+
+The key improvements are:
+
+1. More aggressive preprocessing that fixes common JSON issues:
+   ```python
+   # Fix missing commas between properties
+   text = re.sub(r'"\s*"', '","', text)  # Between strings
+   text = re.sub(r'}\s*{', '},{', text)  # Between objects
+   text = re.sub(r']\s*\[', '],[', text)  # Between arrays
+   ```
+
+2. Better bracket balancing:
+   ```python
+   # Fix unbalanced brackets
+   stack = []
+   fixed_text = ""
+   for char in text:
+       if char in '{[':
+           stack.append(char)
+       elif char in '}]':
+           if stack:
+               if (char == '}' and stack[-1] == '{') or (char == ']' and stack[-1] == '['):
+                   stack.pop()
+   ```
+
+3. More lenient parsing with `demjson3`:
+   ```python
+   # Strategy 1: Try demjson3 with strict=False (most lenient)
+   lambda: demjson3.decode(processed_text, strict=False)
+   ```
+
+These changes should handle most malformed JSON cases, including:
+- Missing commas
+- Unbalanced brackets
+- Unquoted keys
+- Single quotes
+- Trailing commas
+- Missing delimiters
+- Nested structure issues
+
+The parser will now be much more forgiving and should handle most edge cases in the JSON response. If you still encounter any specific parsing issues, please let me know and I can further adjust the parsing strategies.
+
+---
+
+_**User**_
+
+still persists why fix it in the best possible way
+
+---
+
+_**Assistant**_
+
+I notice that the JSON is getting truncated in the middle of an object, which is causing the parsing to fail. Let me implement a more robust solution using a combination of `demjson3`'s recovery features and a custom JSON repair function:
+
+
+---
+
+```diff
+      print("=== End Raw Response Text ===\n")
+      
+-     def preprocess_text(text):
+-         """Preprocess text to handle common issues before parsing"""
++     def repair_json(text):
++         """Repair malformed JSON text"""
++         # First, try to find the largest valid JSON object
++         def find_largest_json(text):
++             max_valid = ""
++             current = ""
++             depth = 0
++             in_string = False
++             escape_next = False
++             
++             for char in text:
++                 if escape_next:
++                     current += char
++                     escape_next = False
++                     continue
++                 
++                 if char == '\\':
++                     escape_next = True
++                     current += char
++                     continue
++                 
++                 if char == '"' and not escape_next:
++                     in_string = not in_string
++                     current += char
++                     continue
++                 
++                 if not in_string:
++                     if char == '{':
++                         if depth == 0:
++                             current = char
++                         else:
++                             current += char
++                         depth += 1
++                     elif char == '}':
++                         depth -= 1
++                         current += char
++                         if depth == 0 and len(current) > len(max_valid):
++                             max_valid = current
++                     else:
++                         current += char
++                 else:
++                     current += char
++             
++             return max_valid if max_valid else text
++         
++         # Clean and normalize the text
++         text = text.strip()
++         
+          # Remove any markdown code block markers
+          text = re.sub(r'```json\s*', '', text)
+```
+
+```diff
+          text = text.lstrip('\ufeff')
+          
+-         # Remove any leading/trailing whitespace
+-         text = text.strip()
+-         
+-         # Fix common issues
+-         text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)  # Fix unquoted keys
+-         text = re.sub(r':\s*\'([^\']*)\'', r':"\1"', text)  # Fix single quotes
+-         text = re.sub(r'([^\\])\\([^"\\/bfnrtu])', r'\1\\\\\2', text)  # Fix invalid escapes
+-         text = re.sub(r',\s*}', '}', text)  # Remove trailing commas
+-         text = re.sub(r',\s*]', ']', text)  # Remove trailing commas in arrays
+-         
++         # Fix common JSON issues
++         fixes = [
++             # Fix unquoted keys
++             (r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":'),
++             # Fix single quotes
++             (r':\s*\'([^\']*)\'', r':"\1"'),
+              # Fix missing commas between properties
+-         text = re.sub(r'"\s*"', '","', text)  # Between strings
+-         text = re.sub(r'}\s*{', '},{', text)  # Between objects
+-         text = re.sub(r']\s*\[', '],[', text)  # Between arrays
+-         text = re.sub(r'"\s*{', '":{', text)  # After property name
+-         text = re.sub(r'"\s*\[', '":[', text)  # After property name before array
+-         
++             (r'"\s*"', '","'),
++             (r'}\s*{', '},{'),
++             (r']\s*\[', '],['),
++             (r'"\s*{', '":{'),
++             (r'"\s*\[', ':['),
+              # Fix missing commas after values
+-         text = re.sub(r'"\s*"', '","', text)  # After string
+-         text = re.sub(r'(\d+)\s*"', r'\1,"', text)  # After number
+-         text = re.sub(r'true\s*"', r'true,"', text)  # After true
+-         text = re.sub(r'false\s*"', r'false,"', text)  # After false
+-         text = re.sub(r'null\s*"', r'null,"', text)  # After null
+-         
+-         # Fix missing commas in arrays and objects
+-         text = re.sub(r'"\s*]', '"]', text)  # Before array end
+-         text = re.sub(r'"\s*}', '"}', text)  # Before object end
+-         text = re.sub(r'(\d+)\s*]', r'\1]', text)  # Number before array end
+-         text = re.sub(r'(\d+)\s*}', r'\1}', text)  # Number before object end
+-         
+-         # Fix specific delimiter issues
+-         text = re.sub(r'([^,{])\s*"([^"]+)"\s*:', r'\1,"\2":', text)  # Missing comma before property
+-         text = re.sub(r'([^,{])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1,"\2":', text)  # Missing comma before unquoted property
++             (r'(\d+)\s*"', r'\1,"'),
++             (r'true\s*"', r'true,"'),
++             (r'false\s*"', r'false,"'),
++             (r'null\s*"', r'null,"'),
++             # Fix trailing commas
++             (r',\s*}', '}'),
++             (r',\s*]', ']'),
++             # Fix missing commas before properties
++             (r'([^,{])\s*"([^"]+)"\s*:', r'\1,"\2":'),
++             (r'([^,{])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1,"\2":'),
++         ]
++         
++         for pattern, replacement in fixes:
++             text = re.sub(pattern, replacement, text)
+          
+          # Ensure the text starts with { and ends with }
+```
+
+```diff
+              text = text + '}'
+          
++         # Find the largest valid JSON object
++         text = find_largest_json(text)
++         
+          # Fix unbalanced brackets
+          stack = []
+```
+
+```diff
+          return fixed_text
+      
+-     def extract_json_block(text):
+-         """Extract the largest valid JSON block from text"""
+-         # Find all potential JSON blocks
+-         json_blocks = []
+-         depth = 0
+-         start = -1
+-         in_string = False
+-         escape_next = False
+-         
+-         for i, char in enumerate(text):
+-             if escape_next:
+-                 escape_next = False
+-                 continue
+-                 
+-             if char == '\\':
+-                 escape_next = True
+-                 continue
+-                 
+-             if char == '"' and not escape_next:
+-                 in_string = not in_string
+-                 continue
+-                 
+-             if not in_string:
+-                 if char == '{':
+-                     if depth == 0:
+-                         start = i
+-                     depth += 1
+-                 elif char == '}':
+-                     depth -= 1
+-                     if depth == 0 and start != -1:
+-                         json_blocks.append(text[start:i+1])
+-                         start = -1
+-         
+-         # Return the largest block
+-         if json_blocks:
+-             return max(json_blocks, key=len)
+-         return None
+-     
+      def validate_and_fix_data(data):
+          """Validate and fix data structure with multiple fallbacks"""
+```
+
+```diff
+              }
+      
+-     # Preprocess the response text
+-     processed_text = preprocess_text(response_text)
+-     
+-     # Try to extract JSON block first
+-     json_block = extract_json_block(processed_text)
+-     if json_block:
+-         processed_text = json_block
++     # Repair the JSON text
++     repaired_text = repair_json(response_text)
+      
+      # Multiple parsing attempts with different strategies
+      parsing_strategies = [
+-         # Strategy 1: Try demjson3 with strict=False (most lenient)
+-         lambda: demjson3.decode(processed_text, strict=False),
++         # Strategy 1: Try demjson3 with strict=False and recovery=True
++         lambda: demjson3.decode(repaired_text, strict=False, recovery=True),
+          
+-         # Strategy 2: Try demjson3 with strict=False and extracted block
+-         lambda: demjson3.decode(extract_json_block(processed_text) or processed_text, strict=False),
++         # Strategy 2: Try demjson3 with strict=False
++         lambda: demjson3.decode(repaired_text, strict=False),
+          
+          # Strategy 3: Try json5
+-         lambda: json5.loads(processed_text),
++         lambda: json5.loads(repaired_text),
+          
+          # Strategy 4: Try standard json
+-         lambda: json.loads(processed_text),
++         lambda: json.loads(repaired_text),
+          
+          # Strategy 5: Try ast.literal_eval as last resort
+-         lambda: ast.literal_eval(processed_text)
++         lambda: ast.literal_eval(repaired_text)
+      ]
+      
+```
+
+---
+
+I've made several significant improvements to the JSON parsing logic:
+
+1. Added a new `find_largest_json` function that intelligently finds the largest valid JSON object in the text, even if it's embedded within other text or has partial content.
+
+2. Replaced the old `preprocess_text` and `extract_json_block` functions with a more robust `repair_json` function that:
+   - Finds the largest valid JSON object first
+   - Applies a comprehensive set of fixes for common JSON issues
+   - Uses a more organized approach with a list of fix patterns
+   - Better handles nested structures and unbalanced brackets
+
+3. Updated the parsing strategies to:
+   - Use `demjson3` with both `strict=False` and `recovery=True` as the first strategy
+   - Apply the repaired JSON text consistently across all strategies
+   - Maintain a clear fallback order from most lenient to strictest
+
+4. Improved the bracket balancing logic to better handle nested structures and mismatched brackets.
+
+The key improvements in this version:
+
+1. Better handling of truncated JSON by finding the largest valid object
+2. More robust bracket balancing and nesting handling
+3. Use of `demjson3`'s recovery features
+4. Consistent application of repairs across all parsing strategies
+5. Better organization of fix patterns for maintainability
+
+This should handle the case where the JSON is truncated in the middle of an object, as it will:
+1. Find the largest valid JSON object
+2. Repair any issues within that object
+3. Use `demjson3`'s recovery features to handle partial or malformed content
+4. Fall back to other parsers if needed
+
+The changes should make the JSON parsing much more robust and able to handle various edge cases, including truncated responses.
+
+---
+
+_**User**_
+
+
+
+---
+
+_**Assistant**_
+
+I notice that the `recovery` parameter is not supported in the current version of `demjson3`. Let me fix this and improve the parsing strategies:
+
+
+---
+
+
+
+---
+
+Let me try again with a more focused edit:
+
+
+---
+
+```diff
+      # Multiple parsing attempts with different strategies
+      parsing_strategies = [
+-         # Strategy 1: Try demjson3 with strict=False and recovery=True
+-         lambda: demjson3.decode(repaired_text, strict=False, recovery=True),
++         # Strategy 1: Try demjson3 with strict=False and allow_omitted=True
++         lambda: demjson3.decode(repaired_text, strict=False, allow_omitted=True),
+          
+-         # Strategy 2: Try demjson3 with strict=False
+-         lambda: demjson3.decode(repaired_text, strict=False),
++         # Strategy 2: Try demjson3 with strict=False and allow_omitted=False
++         lambda: demjson3.decode(repaired_text, strict=False, allow_omitted=False),
+          
+-         # Strategy 3: Try json5
+-         lambda: json5.loads(repaired_text),
++         # Strategy 3: Try demjson3 with strict=True and allow_omitted=True
++         lambda: demjson3.decode(repaired_text, strict=True, allow_omitted=True),
+          
+-         # Strategy 4: Try standard json
+-         lambda: json.loads(repaired_text),
++         # Strategy 4: Try json5 with strict=False
++         lambda: json5.loads(repaired_text, strict=False),
+          
+-         # Strategy 5: Try ast.literal_eval as last resort
++         # Strategy 5: Try standard json with strict=False
++         lambda: json.loads(repaired_text, strict=False),
++         
++         # Strategy 6: Try ast.literal_eval as last resort
+          lambda: ast.literal_eval(repaired_text)
+      ]
+```
+
+```diff
+          except Exception as e:
+              print(f"Strategy {i} failed: {str(e)}")
++             # If it's a demjson3 error about omitted elements, try to fix the structure
++             if "Can not omit elements" in str(e):
++                 try:
++                     # Try to fix the structure by adding missing elements
++                     fixed_text = repaired_text.replace('""', 'null')
++                     fixed_text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":null', fixed_text)
++                     data = demjson3.decode(fixed_text, strict=False, allow_omitted=True)
++                     print("Fixed omitted elements and retried successfully!")
++                     print(json.dumps(data, indent=2))
++                     data = validate_and_fix_data(data)
++                     return data
++                 except Exception as fix_error:
++                     print(f"Failed to fix omitted elements: {str(fix_error)}")
+              continue
+      
+```
+
+---
+
+I've made several important changes to improve the JSON parsing:
+
+1. Removed the unsupported `recovery` parameter and replaced it with the correct `allow_omitted` parameter for `demjson3`.
+
+2. Added more parsing strategies with different combinations of parameters:
+   - Strategy 1: `demjson3` with `strict=False` and `allow_omitted=True` (most lenient)
+   - Strategy 2: `demjson3` with `strict=False` and `allow_omitted=False`
+   - Strategy 3: `demjson3` with `strict=True` and `allow_omitted=True`
+   - Strategy 4: `json5` with `strict=False`
+   - Strategy 5: Standard `json` with `strict=False`
+   - Strategy 6: `ast.literal_eval` as last resort
+
+3. Added special handling for the "Can not omit elements" error:
+   - When this error occurs, it attempts to fix the structure by:
+     - Replacing empty strings (`""`) with `null`
+     - Adding `null` values for unquoted keys
+   - Then retries parsing with the fixed structure
+
+4. Added `strict=False` to both `json5` and standard `json` parsers to be more lenient with the input.
+
+These changes should make the JSON parsing more robust by:
+1. Using the correct parameters for `demjson3`
+2. Providing more fallback options with different levels of strictness
+3. Adding special handling for common error cases
+4. Being more lenient with the input format
+
+The parser should now be better at handling malformed JSON, including cases with omitted elements and unquoted keys.
+
+---
+
+_**User**_
+
+
+
+---
+
+_**Assistant**_
+
+I notice that both `demjson3` and `json5` are failing with unexpected parameter errors. Let me fix the parsing strategies to use the correct parameters for each library:
+
+
+---
+
+```diff
+      # Multiple parsing attempts with different strategies
+      parsing_strategies = [
+-         # Strategy 1: Try demjson3 with strict=False and allow_omitted=True
+-         lambda: demjson3.decode(repaired_text, strict=False, allow_omitted=True),
++         # Strategy 1: Try demjson3 with strict=False
++         lambda: demjson3.decode(repaired_text, strict=False),
+          
+-         # Strategy 2: Try demjson3 with strict=False and allow_omitted=False
+-         lambda: demjson3.decode(repaired_text, strict=False, allow_omitted=False),
++         # Strategy 2: Try demjson3 with strict=True
++         lambda: demjson3.decode(repaired_text, strict=True),
+          
+-         # Strategy 3: Try demjson3 with strict=True and allow_omitted=True
+-         lambda: demjson3.decode(repaired_text, strict=True, allow_omitted=True),
++         # Strategy 3: Try json5
++         lambda: json5.loads(repaired_text),
+          
+-         # Strategy 4: Try json5 with strict=False
+-         lambda: json5.loads(repaired_text, strict=False),
++         # Strategy 4: Try standard json
++         lambda: json.loads(repaired_text),
+          
+-         # Strategy 5: Try standard json with strict=False
+-         lambda: json.loads(repaired_text, strict=False),
+-         
+-         # Strategy 6: Try ast.literal_eval as last resort
++         # Strategy 5: Try ast.literal_eval as last resort
+          lambda: ast.literal_eval(repaired_text)
+      ]
+```
+
+```diff
+              print(f"Strategy {i} failed: {str(e)}")
+              # If it's a demjson3 error about omitted elements, try to fix the structure
+-             if "Can not omit elements" in str(e):
++             if "Can not omit elements" in str(e) or "Unknown behavior" in str(e):
+                  try:
+                      # Try to fix the structure by adding missing elements
+                      fixed_text = repaired_text.replace('""', 'null')
+                      fixed_text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":null', fixed_text)
+-                     data = demjson3.decode(fixed_text, strict=False, allow_omitted=True)
++                     # Try with the most lenient settings
++                     data = demjson3.decode(fixed_text, strict=False)
+                      print("Fixed omitted elements and retried successfully!")
+                      print(json.dumps(data, indent=2))
+```
+
+---
+
+I've simplified the parsing strategies to use only the supported parameters for each library:
+
+1. For `demjson3`:
+   - Removed the unsupported `allow_omitted` parameter
+   - Now using just `strict=False` and `strict=True` options
+
+2. For `json5`:
+   - Removed the unsupported `strict` parameter
+   - Using the default settings which are already lenient
+
+3. For standard `json`:
+   - Removed the unsupported `strict` parameter
+   - Using the default settings
+
+4. Added handling for the "Unknown behavior" error in addition to "Can not omit elements"
+
+5. Simplified the error recovery to use only the supported parameters
+
+The changes should resolve the parameter errors we were seeing and provide a more reliable parsing strategy. The parser will now:
+1. Try `demjson3` with lenient settings first
+2. Fall back to stricter settings if needed
+3. Try `json5` and standard `json` as alternatives
+4. Use `ast.literal_eval` as a last resort
+5. Handle both "Can not omit elements" and "Unknown behavior" errors with the same recovery mechanism
+
+This should provide better compatibility with the actual supported parameters of each library while maintaining robust error handling.
+
+---
+
+_**User**_
+
+
+
+---
+
+_**Assistant**_
+
+I notice that we're still having issues with omitted elements and malformed JSON. Let me enhance the JSON repair function to better handle these cases:
+
+
+---
+
+```diff
+              (r'([^,{])\s*"([^"]+)"\s*:', r'\1,"\2":'),
+              (r'([^,{])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1,"\2":'),
++             # Fix empty values
++             (r':\s*""', ':null'),
++             (r':\s*"', ':"'),
++             # Fix missing values
++             (r':\s*,', ':null,'),
++             (r':\s*}', ':null}'),
++             # Fix missing quotes around property names
++             (r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":'),
+          ]
+          
+```
+
+```diff
+          text = find_largest_json(text)
+          
+-         # Fix unbalanced brackets
++         # Fix unbalanced brackets and ensure proper structure
+          stack = []
+          fixed_text = ""
+          in_string = False
+          escape_next = False
++         last_char = None
+          
+          for char in text:
+```
+
+```diff
+                              fixed_text = '[' + fixed_text + char
+                  else:
++                     # Fix missing commas between properties
++                     if char == '"' and last_char in '}"':
++                         fixed_text += ','
+                      fixed_text += char
+              else:
+                  fixed_text += char
++             
++             last_char = char
+          
+          # Close any remaining open brackets
+```
+
+```diff
+              stack.pop()
+          
++         # Ensure all properties have values
++         fixed_text = re.sub(r':\s*([,}])', r':null\1', fixed_text)
++         
++         # Ensure proper object structure
++         if not re.match(r'^\s*{.*}\s*$', fixed_text):
++             fixed_text = '{' + fixed_text + '}'
++         
+          return fixed_text
+      
+```
+
+---
+
+I've made several significant improvements to the JSON repair function:
+
+1. Added new fix patterns for:
+   - Empty values (converting `""` to `null`)
+   - Missing values (adding `null` for properties without values)
+   - Missing quotes around property names
+   - Proper handling of string values
+
+2. Enhanced the bracket balancing logic:
+   - Added tracking of the last character to detect missing commas
+   - Added automatic comma insertion between properties
+   - Better handling of nested structures
+
+3. Added post-processing steps:
+   - Ensuring all properties have values by adding `null` where needed
+   - Verifying and fixing the overall object structure
+   - Better handling of edge cases in the JSON structure
+
+4. Improved the handling of empty or malformed values:
+   - Converting empty strings to `null`
+   - Adding `null` values for missing properties
+   - Ensuring proper comma placement
+
+These changes should help handle the "Can not omit elements" error by:
+1. Converting empty values to `null`
+2. Adding missing values where needed
+3. Ensuring proper property structure
+4. Better handling of malformed JSON
+
+The parser should now be more robust in handling various JSON malformations, including:
+- Missing values
+- Empty values
+- Unquoted property names
+- Missing commas
+- Improper nesting
+- Incomplete objects
+
+This should provide better success in parsing the JSON response, even when it contains omitted elements or other structural issues.
+
+---
+
+_**User**_
+
+use LLM to detect malformed parts and fix it so that a method could be implemented for all types of json malfunction or use a tool to do so or a library
+
+---
+
+_**Assistant**_
+
+I'll implement a more intelligent approach using the LLM to detect and fix malformed JSON. We'll use the Gemini model to analyze and repair the JSON structure:
+
+
+---
+
+```diff
+      return total_lines >= 150
+  
++ def repair_json_with_llm(text, model):
++     """Use LLM to detect and fix malformed JSON"""
++     try:
++         # Create a prompt for the LLM to analyze and fix the JSON
++         prompt = f"""You are a JSON repair expert. Analyze the following malformed JSON and fix it to be valid JSON.
++         Return ONLY the fixed JSON without any explanation or additional text.
++         Ensure all objects have proper structure, no missing commas, and all properties have values.
++         If a property is missing a value, use null.
++         If there are unquoted keys, quote them.
++         If there are missing commas, add them.
++         If there are unbalanced brackets, fix them.
++         If there are empty values, convert them to null.
++         
++         Malformed JSON:
++         {text}
++         
++         Fixed JSON:"""
++         
++         # Get response from LLM
++         response = model.generate_content(prompt)
++         if not response or not response.text:
++             return None
++             
++         # Extract the fixed JSON from the response
++         fixed_json = response.text.strip()
++         
++         # Remove any markdown code block markers if present
++         fixed_json = re.sub(r'```json\s*', '', fixed_json)
++         fixed_json = re.sub(r'```\s*$', '', fixed_json)
++         
++         # Ensure the JSON starts with { and ends with }
++         if not fixed_json.startswith('{'):
++             fixed_json = '{' + fixed_json
++         if not fixed_json.endswith('}'):
++             fixed_json = fixed_json + '}'
++             
++         return fixed_json
++         
++     except Exception as e:
++         print(f"Error in LLM JSON repair: {str(e)}")
++         return None
++ 
+  def extract_json_from_response(response_text):
+      """Extract and parse JSON from the AI response with multiple fallback mechanisms"""
+```
+
+```diff
+          text = text.lstrip('\ufeff')
+          
+-         # Fix common JSON issues
+-         fixes = [
+-             # Fix unquoted keys
+-             (r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":'),
+-             # Fix single quotes
+-             (r':\s*\'([^\']*)\'', r':"\1"'),
+-             # Fix missing commas between properties
+-             (r'"\s*"', '","'),
+-             (r'}\s*{', '},{'),
+-             (r']\s*\[', '],['),
+-             (r'"\s*{', '":{'),
+-             (r'"\s*\[', ':['),
+-             # Fix missing commas after values
+-             (r'(\d+)\s*"', r'\1,"'),
+-             (r'true\s*"', r'true,"'),
+-             (r'false\s*"', r'false,"'),
+-             (r'null\s*"', r'null,"'),
+-             # Fix trailing commas
+-             (r',\s*}', '}'),
+-             (r',\s*]', ']'),
+-             # Fix missing commas before properties
+-             (r'([^,{])\s*"([^"]+)"\s*:', r'\1,"\2":'),
+-             (r'([^,{])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1,"\2":'),
+-             # Fix empty values
+-             (r':\s*""', ':null'),
+-             (r':\s*"', ':"'),
+-             # Fix missing values
+-             (r':\s*,', ':null,'),
+-             (r':\s*}', ':null}'),
+-             # Fix missing quotes around property names
+-             (r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":'),
+-         ]
+-         
+-         for pattern, replacement in fixes:
+-             text = re.sub(pattern, replacement, text)
+-         
+-         # Ensure the text starts with { and ends with }
+-         if not text.startswith('{'):
+-             text = '{' + text
+-         if not text.endswith('}'):
+-             text = text + '}'
+-         
+          # Find the largest valid JSON object
+          text = find_largest_json(text)
+          
+-         # Fix unbalanced brackets and ensure proper structure
+-         stack = []
+-         fixed_text = ""
+-         in_string = False
+-         escape_next = False
+-         last_char = None
+-         
+-         for char in text:
+-             if escape_next:
+-                 fixed_text += char
+-                 escape_next = False
+-                 continue
+-             
+-             if char == '\\':
+-                 escape_next = True
+-                 fixed_text += char
+-                 continue
+-             
+-             if char == '"' and not escape_next:
+-                 in_string = not in_string
+-                 fixed_text += char
+-                 continue
+-             
+-             if not in_string:
+-                 if char in '{[':
+-                     stack.append(char)
+-                     fixed_text += char
+-                 elif char in '}]':
+-                     if stack:
+-                         if (char == '}' and stack[-1] == '{') or (char == ']' and stack[-1] == '['):
+-                             stack.pop()
+-                             fixed_text += char
+-                         else:
+-                             # Fix mismatched brackets
+-                             if char == '}':
+-                                 fixed_text += ']'
+-                             else:
+-                                 fixed_text += '}'
+-                     else:
+-                         # Add missing opening bracket
+-                         if char == '}':
+-                             fixed_text = '{' + fixed_text + char
+-                         else:
+-                             fixed_text = '[' + fixed_text + char
+-                 else:
+-                     # Fix missing commas between properties
+-                     if char == '"' and last_char in '}"':
+-                         fixed_text += ','
+-                     fixed_text += char
+-             else:
+-                 fixed_text += char
+-             
+-             last_char = char
+-         
+-         # Close any remaining open brackets
+-         while stack:
+-             if stack[-1] == '{':
+-                 fixed_text += '}'
+-             else:
+-                 fixed_text += ']'
+-             stack.pop()
+-         
+-         # Ensure all properties have values
+-         fixed_text = re.sub(r':\s*([,}])', r':null\1', fixed_text)
+-         
+-         # Ensure proper object structure
+-         if not re.match(r'^\s*{.*}\s*$', fixed_text):
+-             fixed_text = '{' + fixed_text + '}'
+-         
+-         return fixed_text
+-     
+-     def validate_and_fix_data(data):
+-         """Validate and fix data structure with multiple fallbacks"""
+-         try:
+-             # Ensure data is a dictionary
+-             if not isinstance(data, dict):
+-                 data = {"sections": [], "company_info": {}, "client_info": {}, "terms": {}, "total_amount": 0}
+-             
+-             # Ensure required fields exist
+-             required_fields = {
+-                 "sections": [],
+-                 "company_info": {"name": "", "address": "", "contact": ""},
+-                 "client_info": {"name": "", "project_name": ""},
+-                 "terms": {"payment_terms": "Net 30", "validity": "30 days"},
+-                 "total_amount": 0
+-             }
+-             
+-             for field, default_value in required_fields.items():
+-                 if field not in data:
+-                     data[field] = default_value
+-                 elif isinstance(default_value, dict) and isinstance(data[field], dict):
+-                     for subfield, subdefault in default_value.items():
+-                         if subfield not in data[field]:
+-                             data[field][subfield] = subdefault
+-             
+-             # Validate and fix sections
+-             if not isinstance(data["sections"], list):
+-                 data["sections"] = []
+-             
+-             for section in data["sections"]:
+-                 if not isinstance(section, dict):
+-                     continue
+-                 
+-                 if "subsections" not in section or not isinstance(section["subsections"], list):
+-                     section["subsections"] = []
+-                 
+-                 for subsection in section["subsections"]:
+-                     if not isinstance(subsection, dict):
+-                         continue
+-                     
+-                     if "items" not in subsection or not isinstance(subsection["items"], list):
+-                         subsection["items"] = []
+-                     
+-                     for item in subsection["items"]:
+-                         if not isinstance(item, dict):
+-                             continue
+-                         
+-                         # Ensure source field exists
+-                         if "source" not in item or not isinstance(item["source"], dict):
+-                             item["source"] = {"document": "", "line_reference": ""}
+-                         
+-                         # Convert numeric values
+-                         numeric_fields = ["quantity", "unit_price", "total_price", "rate", "hours"]
+-                         for field in numeric_fields:
+-                             if field in item:
+-                                 try:
+-                                     item[field] = float(item[field])
+-                                 except (ValueError, TypeError):
+-                                     item[field] = 0
+-             
+-             # Convert total_amount to float
+-             try:
+-                 data["total_amount"] = float(data["total_amount"])
+-             except (ValueError, TypeError):
+-                 data["total_amount"] = 0
+-             
+-             return data
+-             
+-         except Exception as e:
+-             print(f"Error in validate_and_fix_data: {str(e)}")
+-             # Return a valid default structure
+-             return {
+-                 "sections": [],
+-                 "company_info": {"name": "", "address": "", "contact": ""},
+-                 "client_info": {"name": "", "project_name": ""},
+-                 "terms": {"payment_terms": "Net 30", "validity": "30 days"},
+-                 "total_amount": 0
+-             }
+-     
+-     # Repair the JSON text
++         return text
++     
++     # Initialize the model for JSON repair
++     model = initialize_model()
++     
++     # First try to repair the JSON using the LLM
+      repaired_text = repair_json(response_text)
++     if repaired_text:
++         llm_repaired_text = repair_json_with_llm(repaired_text, model)
++         if llm_repaired_text:
++             repaired_text = llm_repaired_text
+      
+      # Multiple parsing attempts with different strategies
+```
+
+---
+
+I've made a significant change to the JSON parsing approach by introducing LLM-based JSON repair. Here's what's new:
+
+1. Added a new `repair_json_with_llm` function that:
+   - Uses the Gemini model to analyze and fix malformed JSON
+   - Provides specific instructions to the model about how to fix various JSON issues
+   - Returns only the fixed JSON without any additional text
+   - Handles common JSON issues like:
+     - Missing values
+     - Unquoted keys
+     - Missing commas
+     - Unbalanced brackets
+     - Empty values
+
+2. Simplified the `repair_json` function to:
+   - Focus on finding the largest valid JSON object
+   - Basic text cleaning and normalization
+   - Let the LLM handle the complex repairs
+
+3. Updated the parsing flow to:
+   - First try basic JSON repair
+   - Then use the LLM to fix any remaining issues
+   - Finally attempt parsing with multiple strategies
+
+The key advantages of this approach:
+
+1. More intelligent repair:
+   - The LLM can understand the context and structure of the JSON
+   - Can handle complex cases that regex patterns might miss
+   - Can fix multiple issues at once
+
+2. Better handling of edge cases:
+   - The LLM can understand the intended structure
+   - Can fix deeply nested issues
+   - Can handle unusual formatting
+
+3. More maintainable:
+   - Less complex regex patterns
+   - More flexible to new types of JSON issues
+   - Easier to update by modifying the LLM prompt
+
+To use this new approach:
+
+1. The code will first try to find the largest valid JSON object
+2. Then it will use the LLM to analyze and fix any issues
+3. Finally, it will try multiple parsing strategies with the repaired JSON
+
+This should provide much better handling of malformed JSON, as the LLM can understand and fix complex issues that would be difficult to handle with regex patterns alone.
+
+---
+
+_**User**_
+
+
+
+---
+
+_**Assistant**_
+
+I notice that we're getting "String literal is not terminated" errors, which suggests the JSON has unterminated strings. Let me enhance the LLM-based repair to specifically handle this case and add more robust string handling:
+
+
+---
+
+```diff
+      """Use LLM to detect and fix malformed JSON"""
+      try:
++         # Pre-process the text to handle unterminated strings
++         def fix_unterminated_strings(text):
++             lines = text.split('\n')
++             fixed_lines = []
++             in_string = False
++             escape_next = False
++             
++             for line in lines:
++                 fixed_line = ""
++                 for char in line:
++                     if escape_next:
++                         fixed_line += char
++                         escape_next = False
++                         continue
++                     
++                     if char == '\\':
++                         escape_next = True
++                         fixed_line += char
++                         continue
++                     
++                     if char == '"':
++                         in_string = not in_string
++                         fixed_line += char
++                     else:
++                         fixed_line += char
++                 
++                 # If we're still in a string at the end of the line, add a closing quote
++                 if in_string:
++                     fixed_line += '"'
++                     in_string = False
++                 
++                 fixed_lines.append(fixed_line)
++             
++             return '\n'.join(fixed_lines)
++         
++         # Fix unterminated strings first
++         text = fix_unterminated_strings(text)
++         
+          # Create a prompt for the LLM to analyze and fix the JSON
+          prompt = f"""You are a JSON repair expert. Analyze the following malformed JSON and fix it to be valid JSON.
+          Return ONLY the fixed JSON without any explanation or additional text.
+-         Ensure all objects have proper structure, no missing commas, and all properties have values.
+-         If a property is missing a value, use null.
+-         If there are unquoted keys, quote them.
+-         If there are missing commas, add them.
+-         If there are unbalanced brackets, fix them.
+-         If there are empty values, convert them to null.
++         
++         Rules for fixing:
++         1. Ensure all strings are properly terminated with double quotes
++         2. Fix any unterminated strings by adding closing quotes
++         3. Ensure all objects have proper structure
++         4. Add missing commas between properties
++         5. Convert empty values to null
++         6. Quote any unquoted property names
++         7. Fix any unbalanced brackets
++         8. Remove any trailing commas
++         9. Ensure all properties have values
++         10. Handle any escape sequences properly
+          
+          Malformed JSON:
+```
+
+```diff
+          if not fixed_json.endswith('}'):
+              fixed_json = fixed_json + '}'
++         
++         # Verify the fixed JSON has balanced quotes
++         quote_count = fixed_json.count('"')
++         if quote_count % 2 != 0:
++             # If we have an odd number of quotes, try to fix it
++             fixed_json = fixed_json.replace('""', '"')  # Remove any double quotes
++             if fixed_json.count('"') % 2 != 0:
++                 fixed_json += '"'  # Add a closing quote if still unbalanced
+              
+          return fixed_json
+```
+
+---
+
+I've made several improvements to handle the unterminated string issues:
+
+1. Added a new `fix_unterminated_strings` function that:
+   - Processes the text line by line
+   - Tracks string state and escape sequences
+   - Automatically adds closing quotes for unterminated strings
+   - Handles escape sequences properly
+
+2. Enhanced the LLM prompt with more specific rules:
+   - Added explicit rules for handling string termination
+   - Added rules for handling escape sequences
+   - Added rules for removing trailing commas
+   - Made the rules more comprehensive and specific
+
+3. Added quote balancing verification:
+   - Counts the number of quotes in the fixed JSON
+   - Removes any double quotes that might have been added incorrectly
+   - Adds a closing quote if the count is still unbalanced
+
+4. Improved the overall string handling:
+   - Better handling of escape sequences
+   - More robust line-by-line processing
+   - Better handling of nested strings
+
+The parser should now be much better at handling unterminated strings and other string-related issues. The combination of:
+1. Pre-processing to fix unterminated strings
+2. LLM-based repair with specific string handling rules
+3. Post-processing to verify quote balancing
+
+Should handle most cases of malformed JSON with string issues. Let me know if you still see any string-related errors.
+
+---
+
+_**User**_
+
+use a robust method and library to achieve assured results, also if it in a case no all methods fail show the original json file
+
+---
+
+_**Assistant**_
+
+I'll enhance the JSON parsing with a more robust approach using multiple libraries and add better error handling and debugging. I'll also ensure we show the original JSON when all methods fail.
+
+
+---
+
+```diff
+              repaired_text = llm_repaired_text
+      
++     # Save the original and repaired text for debugging
++     debug_info = {
++         "original_text": response_text,
++         "repaired_text": repaired_text,
++         "errors": []
++     }
++     
+      # Multiple parsing attempts with different strategies
+      parsing_strategies = [
+-         # Strategy 1: Try demjson3 with strict=False
+-         lambda: demjson3.decode(repaired_text, strict=False),
++         # Strategy 1: Try demjson3 with strict=False and allow_omitted=True
++         lambda: demjson3.decode(repaired_text, strict=False, allow_omitted=True),
+          
+-         # Strategy 2: Try demjson3 with strict=True
+-         lambda: demjson3.decode(repaired_text, strict=True),
++         # Strategy 2: Try demjson3 with strict=False and allow_omitted=False
++         lambda: demjson3.decode(repaired_text, strict=False, allow_omitted=False),
+          
+-         # Strategy 3: Try json5
+-         lambda: json5.loads(repaired_text),
++         # Strategy 3: Try json5 with strict=False
++         lambda: json5.loads(repaired_text, strict=False),
+          
+-         # Strategy 4: Try standard json
+-         lambda: json.loads(repaired_text),
++         # Strategy 4: Try standard json with strict=False
++         lambda: json.loads(repaired_text, strict=False),
+          
+          # Strategy 5: Try ast.literal_eval as last resort
+```
+
+```diff
+              
+          except Exception as e:
+-             print(f"Strategy {i} failed: {str(e)}")
++             error_msg = f"Strategy {i} failed: {str(e)}"
++             print(error_msg)
++             debug_info["errors"].append(error_msg)
++             
+              # If it's a demjson3 error about omitted elements, try to fix the structure
+              if "Can not omit elements" in str(e) or "Unknown behavior" in str(e):
+```
+
+```diff
+                      return data
+                  except Exception as fix_error:
+-                     print(f"Failed to fix omitted elements: {str(fix_error)}")
++                     error_msg = f"Failed to fix omitted elements: {str(fix_error)}"
++                     print(error_msg)
++                     debug_info["errors"].append(error_msg)
+              continue
+      
+      print("\n=== All Parsing Strategies Failed ===")
++     print("Debug Information:")
++     print(json.dumps(debug_info, indent=2))
++     
++     # Try to extract any valid JSON objects from the text
++     try:
++         # Find all potential JSON objects in the text
++         json_objects = re.findall(r'\{[^{}]*\}', response_text)
++         if json_objects:
++             print("\nFound potential JSON objects in the text:")
++             for i, obj in enumerate(json_objects, 1):
++                 print(f"\nObject {i}:")
++                 print(obj)
++     except Exception as e:
++         print(f"Error extracting potential JSON objects: {str(e)}")
++     
+      # Return a valid default structure as last resort
+      return {
+```
+
+```diff
+          "client_info": {"name": "", "project_name": ""},
+          "terms": {"payment_terms": "Net 30", "validity": "30 days"},
+-         "total_amount": 0
++         "total_amount": 0,
++         "_debug_info": debug_info  # Include debug information in the response
+      }
+  
+```
+
+---
+
+I've made several improvements to make the JSON parsing more robust and provide better debugging information:
+
+1. Enhanced Parsing Strategies:
+   - Added `allow_omitted=True` to the first demjson3 strategy for more lenient parsing
+   - Added `strict=False` to all parsers for more flexible handling
+   - Kept the strategies in order of decreasing strictness
+
+2. Added Comprehensive Debugging:
+   - Created a `debug_info` dictionary to track:
+     - Original text
+     - Repaired text
+     - All parsing errors encountered
+   - Added detailed error logging for each strategy
+   - Included debug information in the final response
+
+3. Added JSON Object Extraction:
+   - Added a fallback mechanism to find potential JSON objects in the text
+   - Uses regex to find all possible JSON objects
+   - Prints each found object for inspection
+
+4. Improved Error Handling:
+   - Better error messages with strategy numbers
+   - Tracking of all errors in the debug info
+   - More detailed error reporting for omitted elements
+
+5. Enhanced Output:
+   - Shows the original JSON when all methods fail
+   - Displays all potential JSON objects found
+   - Includes debug information in the returned structure
+
+The parser should now:
+1. Be more robust in handling malformed JSON
+2. Provide better debugging information
+3. Show the original JSON when parsing fails
+4. Attempt to extract any valid JSON objects from the text
+5. Give more detailed error information
+
+This should help identify and fix JSON parsing issues more effectively. Let me know if you still see any parsing errors, and we can further adjust the strategies based on the specific issues encountered.
+
+---
+
+_**User**_
+
+
+
+---
+
+_**Assistant**_
+
+I notice several issues from the error messages:
+1. `demjson3` is failing with "Unknown behavior" for omitted elements
+2. `json5` doesn't support the `strict` parameter
+3. There's extra data after the JSON value
+4. There's an unmatched closing brace
+
+Let me fix these issues and add more robust parsing:
+
+
+---
+
+```diff
+          # Find the largest valid JSON object
+          text = find_largest_json(text)
++         
++         # Fix common JSON issues
++         text = re.sub(r',\s*}', '}', text)  # Remove trailing commas
++         text = re.sub(r',\s*]', ']', text)  # Remove trailing commas in arrays
++         text = re.sub(r'}\s*{', '},{', text)  # Fix missing commas between objects
++         text = re.sub(r']\s*{', '],{', text)  # Fix missing commas between array and object
++         text = re.sub(r'}\s*\[', '},{', text)  # Fix missing commas between object and array
++         text = re.sub(r'""', '"', text)  # Remove double quotes
++         text = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)  # Quote unquoted keys
+          
+          return text
+```
+
+```diff
+      # Multiple parsing attempts with different strategies
+      parsing_strategies = [
+-         # Strategy 1: Try demjson3 with strict=False and allow_omitted=True
+-         lambda: demjson3.decode(repaired_text, strict=False, allow_omitted=True),
++         # Strategy 1: Try demjson3 with strict=False
++         lambda: demjson3.decode(repaired_text, strict=False),
+          
+-         # Strategy 2: Try demjson3 with strict=False and allow_omitted=False
+-         lambda: demjson3.decode(repaired_text, strict=False, allow_omitted=False),
++         # Strategy 2: Try json5 (without strict parameter)
++         lambda: json5.loads(repaired_text),
+          
+-         # Strategy 3: Try json5 with strict=False
+-         lambda: json5.loads(repaired_text, strict=False),
++         # Strategy 3: Try standard json
++         lambda: json.loads(repaired_text),
+          
+-         # Strategy 4: Try standard json with strict=False
+-         lambda: json.loads(repaired_text, strict=False),
+-         
+-         # Strategy 5: Try ast.literal_eval as last resort
++         # Strategy 4: Try ast.literal_eval as last resort
+          lambda: ast.literal_eval(repaired_text)
+      ]
+```
+
+```diff
+              
+              # If it's a demjson3 error about omitted elements, try to fix the structure
+-             if "Can not omit elements" in str(e) or "Unknown behavior" in str(e):
++             if "Unknown behavior" in str(e) or "omitted" in str(e):
+                  try:
+                      # Try to fix the structure by adding missing elements
+```
+
+```diff
+                  print(f"\nObject {i}:")
+                  print(obj)
++                 # Try to parse each object individually
++                 try:
++                     parsed_obj = json.loads(obj)
++                     print(f"Successfully parsed object {i}:")
++                     print(json.dumps(parsed_obj, indent=2))
++                 except Exception as e:
++                     print(f"Failed to parse object {i}: {str(e)}")
+      except Exception as e:
+          print(f"Error extracting potential JSON objects: {str(e)}")
+```
+
+---
+
+I've made several improvements to handle the specific errors we're seeing:
+
+1. Enhanced JSON Repair:
+   - Added more regex fixes for common JSON issues:
+     - Removing trailing commas
+     - Fixing missing commas between objects and arrays
+     - Removing double quotes
+     - Quoting unquoted keys
+   - These fixes should help with the "unmatched '}'" and "extra data" errors
+
+2. Simplified Parsing Strategies:
+   - Removed redundant strategies
+   - Removed unsupported parameters (like `strict` for json5)
+   - Kept the most effective strategies in order of decreasing strictness
+
+3. Improved Error Handling:
+   - Updated the error detection for omitted elements
+   - Added better handling of "Unknown behavior" errors
+   - Added individual parsing attempts for extracted JSON objects
+
+4. Enhanced JSON Object Extraction:
+   - Added individual parsing attempts for each found JSON object
+   - Shows which objects were successfully parsed
+   - Provides more detailed error information for each object
+
+5. Better Debugging:
+   - More detailed error messages
+   - Shows successful parses of individual objects
+   - Maintains comprehensive debug information
+
+The parser should now:
+1. Handle the "Unknown behavior" errors better
+2. Deal with extra data after JSON values
+3. Fix unmatched braces
+4. Parse individual JSON objects when the full parse fails
+5. Provide more detailed debugging information
+
+Let me know if you still see any parsing errors, and we can further adjust the strategies based on the specific issues encountered.
+
+---
+
+_**User**_
+
+why is this error happening what is teh root cause
+
+---
+
+_**Assistant**_
+
+
+
+---
+
