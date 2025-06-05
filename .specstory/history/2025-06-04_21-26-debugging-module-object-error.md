@@ -2026,8 +2026,6 @@ _**Assistant**_
 
 ---
 
-
-
 Okay, I understand the issue. The Excel file is being generated with default column headers ("Unnamed: X") instead of the intended headers like "Qty", "Product", etc. This is because the code is currently writing all rows, including the intended header rows, as data rows, and Excel is automatically generating default headers.
 
 To fix this, I need to:
@@ -2367,7 +2365,7 @@ To proceed with fixing the Excel headers, it seems the indentation issue in `com
 
 _**User**_
 
-
+fix it
 
 ---
 
