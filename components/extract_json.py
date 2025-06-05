@@ -17,44 +17,77 @@ def clean_json_text(text):
     # Remove BOM and special characters
     text = text.lstrip('\ufeff')
     
+    # Fix double quotes
+    text = re.sub(r'""([^"]*)""', r'"\1"', text)  # Fix double quoted strings
+    text = re.sub(r'"\s*"', '"', text)  # Remove empty quotes
+    
     return text.strip()
+
+def fix_broken_string_values(text):
+    """Fix broken string values in JSON text"""
+    # Split into lines for processing
+    lines = text.split('\n')
+    fixed_lines = []
+    
+    for line in lines:
+        # Fix unquoted string values
+        if ':' in line:
+            key, value = line.split(':', 1)
+            value = value.strip()
+            
+            # Clean up any double quotes
+            value = re.sub(r'""([^"]*)""', r'"\1"', value)
+            value = re.sub(r'"\s*"', '"', value)
+            
+            # If value is not already quoted and not a number/boolean/null
+            if not (value.startswith('"') and value.endswith('"')) and \
+               not (value.startswith("'") and value.endswith("'")) and \
+               not value.isdigit() and \
+               value.lower() not in ['true', 'false', 'null'] and \
+               not value.startswith('{') and \
+               not value.startswith('['):
+                
+                # Handle multiple values separated by commas
+                if ',' in value:
+                    values = [v.strip() for v in value.split(',')]
+                    # Clean each value
+                    values = [re.sub(r'^"|"$', '', v) for v in values]  # Remove any existing quotes
+                    value = '", "'.join(values)
+                    value = f'"{value}"'
+                else:
+                    # Remove any existing quotes before adding new ones
+                    value = re.sub(r'^"|"$', '', value)
+                    value = f'"{value}"'
+            
+            fixed_lines.append(f'{key}: {value}')
+        else:
+            fixed_lines.append(line)
+    
+    return '\n'.join(fixed_lines)
 
 def fix_json_syntax(text):
     """Fix common JSON syntax issues"""
-    # Fix unquoted keys (but be more careful about context)
-    text = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
+    # Fix missing quotes around property names
+    text = re.sub(r'([{,])\s*([a-zA-Z0-9_]+)\s*:', r'\1"\2":', text)
     
-    # Fix the specific issue: "address":"123 Main Street", Anytown, USA"
-    # This handles cases where a string starts with a quote but has unquoted content after a comma
-    text = re.sub(r':\s*"([^"]*)",\s*([^",}\]]+)"', r':"\1, \2"', text)
+    # Fix missing quotes around string values
+    text = re.sub(r':\s*([^"\'{\[\]}\s][^,}\]]*?)([,}\]])', r': "\1"\2', text)
     
-    # Fix similar issue with contact info: "contact":"John Doe", john.doe@meetingtomorrow.com"
-    text = re.sub(r':\s*"([^"]*)",\s*([^",}\s]+)"', r':"\1, \2"', text)
-    
-    # More general fix for broken string values with embedded commas
-    # Pattern: "key":"value", unquoted_value"
-    text = re.sub(r':\s*"([^"]*)",\s*([^",}\]]+)"', r':"\1, \2"', text)
-    
-    # Fix malformed strings that don't end properly
-    # Pattern: "something something" something_else"
-    text = re.sub(r'"([^"]*?"\s*[^",}\]]+)"', r'"\1"', text)
-    
-    # Remove trailing commas before closing brackets/braces
+    # Fix trailing commas
     text = re.sub(r',(\s*[}\]])', r'\1', text)
     
-    # Fix single quotes to double quotes (but avoid breaking escaped quotes)
-    text = re.sub(r"(?<!\\)'([^']*)'", r'"\1"', text)
+    # Fix missing commas between properties
+    text = re.sub(r'"\s*}\s*"', '", "', text)
     
-    # Fix missing commas between objects
-    text = re.sub(r'}\s*{', '},{', text)
-    text = re.sub(r'}\s*\[', '},[', text)
-    text = re.sub(r']\s*{', '],{', text)
+    # Fix multiple values in a single field
+    text = re.sub(r':\s*([^"\'{\[\]}\s][^,}\]]*?),\s*([^"\'{\[\]}\s][^,}\]]*?)([,}\]])', r': ["\1", "\2"]\3', text)
     
-    # Fix unterminated strings at end of values
+    # Fix double quotes
+    text = re.sub(r'""([^"]*)""', r'"\1"', text)
+    text = re.sub(r'"\s*"', '"', text)
+    
+    # Fix unterminated strings
     text = re.sub(r':\s*"([^"]*?)(?=\s*[,}\]])', r':"\1"', text)
-    
-    # Fix broken email/contact patterns: "name", email@domain.com"
-    text = re.sub(r':\s*"([^"]*)",\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})"', r':"\1, \2"', text)
     
     return text
 
@@ -102,51 +135,6 @@ def extract_json_content(text):
         return text
     return text[start:end]
 
-def fix_broken_string_values(text):
-    """Fix broken string values like 'key':'value', unquoted_part'"""
-    lines = text.split('\n')
-    fixed_lines = []
-    
-    for line in lines:
-        # Look for the pattern: "key":"value", unquoted_value"
-        if '":' in line and line.count('"') % 2 != 0:  # Odd number of quotes indicates broken string
-            # Try to fix common patterns
-            
-            # Pattern 1: "address":"123 Main Street", Anytown, USA"
-            if re.search(r':\s*"[^"]*",\s*[^",}]+[^"]*"', line):
-                # Find the key
-                key_match = re.search(r'"([^"]+)":\s*"', line)
-                if key_match:
-                    key = key_match.group(1)
-                    # Extract everything after the colon
-                    value_part = line.split(':', 1)[1].strip()
-                    # Remove the first quote and last quote, then wrap the whole thing
-                    if value_part.startswith('"') and value_part.endswith('"'):
-                        inner_value = value_part[1:-1]
-                        # Replace any internal quotes with escaped quotes
-                        inner_value = inner_value.replace('"', '\\"')
-                        fixed_line = f'        "{key}": "{inner_value}"'
-                        fixed_lines.append(fixed_line)
-                        continue
-            
-            # Pattern 2: Generic broken string repair
-            # If line has uneven quotes, try to balance them
-            if line.strip().endswith(','):
-                line_without_comma = line.rstrip().rstrip(',')
-                quote_count = line_without_comma.count('"')
-                if quote_count % 2 != 0:
-                    # Add missing quote before the comma
-                    line = line_without_comma + '",'
-            else:
-                quote_count = line.count('"')
-                if quote_count % 2 != 0 and not line.strip().endswith('}'):
-                    # Add missing quote at the end
-                    line = line.rstrip() + '"'
-        
-        fixed_lines.append(line)
-    
-    return '\n'.join(fixed_lines)
-
 def aggressive_json_repair(text):
     """Aggressively repair any text to make it valid JSON"""
     # Clean the text first
@@ -183,6 +171,13 @@ def aggressive_json_repair(text):
         extra_brackets = close_brackets - open_brackets
         for _ in range(extra_brackets):
             json_content = json_content.rsplit(']', 1)[0] + json_content.rsplit(']', 1)[1]
+    
+    # Fix any remaining unquoted values in arrays
+    json_content = re.sub(r'\[([^"\'{\[\]}\s][^,}\]]*?)\]', r'["\1"]', json_content)
+    
+    # Final cleanup of any remaining double quotes
+    json_content = re.sub(r'""([^"]*)""', r'"\1"', json_content)
+    json_content = re.sub(r'"\s*"', '"', json_content)
     
     return json_content
 

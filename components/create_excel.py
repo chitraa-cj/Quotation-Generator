@@ -172,18 +172,21 @@ def create_excel_from_quotation(quotation_data, template=None):
         'font_size': 12
     })
     
+    # Define column names
+    column_names = ['Qty', 'Product', 'Description', 'Price Level', 'Unit Price', 'Price', 'Source', 'Reference']
+    
     # Process sections
     for section in data.get('sections', []):
         section_name = section.get('name', 'Unnamed Section')
         rows = []
         
         # Add section header
-        rows.append([section_name] + [''] * 7)
+        rows.append([section_name] + [''] * (len(column_names) - 1))
         
         # Process subsections
         for subsection in section.get('subsections', []):
-            rows.append([f"  {subsection.get('name', 'Unnamed Subsection')}"] + [''] * 7)
-            rows.append(['Qty', 'Product', 'Description', 'Price Level', 'Unit Price', 'Price', 'Source', 'Reference'])
+            rows.append([f"  {subsection.get('name', 'Unnamed Subsection')}"] + [''] * (len(column_names) - 1))
+            rows.append(column_names)  # Add column headers
             
             # Process items
             for item in subsection.get('items', []):
@@ -201,8 +204,8 @@ def create_excel_from_quotation(quotation_data, template=None):
                 rows.append(row)
         
         if rows:
-            # Create DataFrame
-            df = pd.DataFrame(rows)
+            # Create DataFrame with proper column names
+            df = pd.DataFrame(rows, columns=column_names)
             
             # Convert all object columns to string type to prevent Arrow serialization issues
             for col in df.columns:
@@ -211,10 +214,16 @@ def create_excel_from_quotation(quotation_data, template=None):
             
             # Write to Excel
             sheet_name = str(section_name)[:31]  # Excel sheet names limited to 31 chars
-            df.to_excel(excel_buffer, sheet_name=sheet_name, index=False, header=False)
+            df.to_excel(excel_buffer, sheet_name=sheet_name, index=False)
             
             # Get worksheet and apply formatting
             worksheet = excel_buffer.sheets[sheet_name]
+            
+            # Apply header format to the first row
+            for col_num, value in enumerate(df.columns):
+                worksheet.write(0, col_num, value, header_format)
+            
+            # Set column widths
             for i, col in enumerate(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']):
                 worksheet.set_column(f'{col}:{col}', 20)
     
