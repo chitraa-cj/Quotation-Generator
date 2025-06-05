@@ -187,21 +187,27 @@ def create_excel_from_quotation(quotation_data, template=None):
             
             # Process items
             for item in subsection.get('items', []):
+                # Convert all text fields to strings to prevent Arrow serialization issues
                 row = [
                     item.get('quantity', 0),
-                    item.get('product', ''),
-                    item.get('description', ''),
-                    item.get('price_level', 'Standard'),
+                    str(item.get('product', '')),
+                    str(item.get('description', '')),
+                    str(item.get('price_level', 'Standard')),
                     item.get('unit_price', 0),
                     item.get('total_price', 0),
-                    item.get('source', {}).get('document', ''),
-                    item.get('source', {}).get('line_reference', '')
+                    str(item.get('source', {}).get('document', '')),
+                    str(item.get('source', {}).get('line_reference', ''))
                 ]
                 rows.append(row)
         
         if rows:
             # Create DataFrame
             df = pd.DataFrame(rows)
+            
+            # Convert all object columns to string type to prevent Arrow serialization issues
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    df[col] = df[col].astype(str)
             
             # Write to Excel
             sheet_name = str(section_name)[:31]  # Excel sheet names limited to 31 chars
