@@ -1,0 +1,10 @@
+2025-06-05 03:42:48,141 - INFO - Starting Excel generation
+2025-06-05 03:42:48,149 - INFO - JSON data validated successfully
+2025-06-05 03:42:48,150 - INFO - Using default Excel structure
+2025-06-05 03:42:48,171 - INFO - Excel file created successfully at /var/folders/wc/mq5yhp9j4n53h_2zmwxy6dsc0000gn/T/quotation_792ddd70-78ae-4293-a3f3-d6b81982073b.xlsx (size: 5678 bytes)
+2025-06-05 03:42:48,263 - INFO - Successfully verified Excel file with 1 sheets
+2025-06-05 03:45:35,796 - INFO - Starting Excel generation
+2025-06-05 03:45:35,809 - INFO - JSON data validated successfully
+2025-06-05 03:45:35,811 - INFO - Using default Excel structure
+2025-06-05 03:45:35,829 - INFO - Excel file created successfully at /var/folders/wc/mq5yhp9j4n53h_2zmwxy6dsc0000gn/T/quotation_8648f489-4e7e-4226-b982-56585e2d2f42.xlsx (size: 5678 bytes)
+2025-06-05 03:45:35,849 - INFO - Successfully verified Excel file with 1 sheets

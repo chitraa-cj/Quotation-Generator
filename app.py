@@ -461,17 +461,19 @@ def main():
                                     st.text_area("Raw AI Response", response_text, height=300)
                                 return
                             
-                            # Generate Excel file first
+                            # Store quotation data in session state
+                            st.session_state.current_quotation_data = quotation_data
+                            
+                            # Show JSON data immediately in a formatted way
+                            with tab2:
+                                st.json(quotation_data, expanded=True)
+                            
+                            # Generate Excel file
                             try:
                                 excel_file = create_excel_from_quotation(quotation_data, st.session_state.template)
                                 
-                                # Only store data if Excel creation succeeds
-                                st.session_state.current_quotation_data = quotation_data
+                                # Store Excel file in session state
                                 st.session_state.current_excel_file = excel_file
-                                
-                                # Show JSON data
-                                with tab2:
-                                    st.json(quotation_data, expanded=True)
                                 
                                 # Show Excel preview with proper formatting
                                 with tab1:

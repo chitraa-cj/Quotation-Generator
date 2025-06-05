@@ -3,7 +3,6 @@ import pandas as pd
 import tempfile
 
 
-
 def generate_quotation_prompt(examples, input_docs_text, similar_examples=None, template=None):
     # Format examples
     examples_text = ""
