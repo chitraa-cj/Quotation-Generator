@@ -10,9 +10,9 @@ from typing import List, Dict, Any
 import json
 
 # Comment out these imports temporarily to test basic FastAPI functionality
-# from components.extract_json import extract_json_from_response
-# from components.create_excel import create_excel_from_quotation
-# from utils import extract_text_from_file
+from components.extract_json import extract_json_from_response
+from components.create_excel import create_excel_from_quotation
+from utils import extract_text_from_file
 
 app = FastAPI()
 
