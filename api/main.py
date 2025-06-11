@@ -252,28 +252,18 @@ async def download_drive_file_debug(file_id: str, event: Dict[Any, Any], filenam
     logger.info(f"Filename: {filename}")
     
     try:
-        # Method 1: Try using Google Chat API to get file content
-        # This is the proper way for Google Chat bots
-        
-        # Extract possible tokens from the event
-        possible_tokens = []
-        
-        # Check various locations where tokens might be
+        # Get the token from the event
+        token = None
         if "token" in event:
-            possible_tokens.append(("event.token", event["token"]))
+            token = event["token"]
+        elif "message" in event and "token" in event["message"]:
+            token = event["message"]["token"]
         
-        if "message" in event and "token" in event["message"]:
-            possible_tokens.append(("message.token", event["message"]["token"]))
+        if not token:
+            logger.error("No authentication token found in event")
+            return None
             
-        # Check for authorization header in the original request
-        # This would need to be passed from the Apps Script
-        
-        logger.info(f"Found {len(possible_tokens)} possible tokens")
-        
-        # For now, let's try a different approach
-        # Use the Google Chat API to get attachment content
-        
-        # Method 2: Try to use the attachment's downloadUrl if available
+        # Get the download URL from the attachment
         message = event.get("message", {})
         attachments = message.get("attachment", [])
         
@@ -283,30 +273,34 @@ async def download_drive_file_debug(file_id: str, event: Dict[Any, Any], filenam
                 target_attachment = attachment
                 break
         
-        if target_attachment:
-            logger.info(f"Found target attachment: {json.dumps(target_attachment, indent=2)}")
+        if not target_attachment:
+            logger.error(f"Could not find attachment with file ID: {file_id}")
+            return None
             
-            # Check if there's a downloadUrl or other access method
-            drive_file = target_attachment.get("driveFile", {})
-            if "downloadUrl" in drive_file:
-                download_url = drive_file["downloadUrl"]
-                logger.info(f"Found download URL: {download_url}")
+        drive_file = target_attachment.get("driveFile", {})
+        download_url = drive_file.get("downloadUrl")
+        
+        if not download_url:
+            logger.error("No download URL found in attachment")
+            return None
+            
+        # Download the file using the URL and token
+        async with httpx.AsyncClient() as client:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "*/*"
+            }
+            
+            response = await client.get(download_url, headers=headers)
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully downloaded file: {len(response.content)} bytes")
+                return response.content
+            else:
+                logger.error(f"Failed to download file. Status code: {response.status_code}")
+                logger.error(f"Response: {response.text}")
+                return None
                 
-                # Try to download using the URL
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(download_url)
-                    if response.status_code == 200:
-                        logger.info(f"Successfully downloaded via URL: {len(response.content)} bytes")
-                        return response.content
-                    else:
-                        logger.error(f"Download failed with status: {response.status_code}")
-        
-        # Method 3: Create a mock file for testing
-        # This is just for debugging - remove in production
-        logger.warning("Creating mock file content for testing")
-        mock_content = f"This is a test document for {filename}\n\nContent for testing purposes.\n\nThis would normally be the actual file content."
-        return mock_content.encode('utf-8')
-        
     except Exception as e:
         logger.error(f"Error downloading Drive file {file_id}: {str(e)}", exc_info=True)
         return None
