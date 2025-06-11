@@ -8,10 +8,9 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Any
 import json
-import httpx
 import base64
 
-# Comment out these imports temporarily to test basic FastAPI functionality
+# Import your custom modules
 from components.extract_json import extract_json_from_response
 from components.create_excel import create_excel_from_quotation
 from utils import extract_text_from_file
@@ -21,14 +20,14 @@ app = FastAPI()
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Temporarily allow all origins for debugging
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG for more details
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Store for temporary files (use Redis/database in production)
@@ -41,7 +40,6 @@ async def chat_webhook(request: Request):
         event = await request.json()
         logger.info(f"=== RECEIVED GOOGLE CHAT EVENT ===")
         logger.info(f"Event type: {event.get('type')}")
-        logger.info(f"Full event: {json.dumps(event, indent=2)}")
         
         event_type = event.get("type")
         
@@ -78,10 +76,10 @@ def handle_added_to_space(event: Dict[Any, Any]) -> Dict[str, Any]:
     logger.info(f"Bot added to space: {space.get('name', 'unknown')}")
     
     if space.get("singleUserBotDm"):
-        message = f"Thank you for adding me to a DM, {user.get('displayName', 'User')}!"
+        message = f"👋 Hello {user.get('displayName', 'User')}! Welcome to your Document Quotation Assistant!"
     else:
         space_name = space.get("displayName", "this chat")
-        message = f"Thank you for adding me to {space_name}!"
+        message = f"👋 Thank you for adding me to {space_name}!"
     
     message += "\n\n📄 **How to use me:**\n"
     message += "• Upload documents (PDF, DOCX, TXT, RTF)\n"
@@ -97,93 +95,102 @@ def handle_removed_from_space(event: Dict[Any, Any]) -> Dict[str, Any]:
     return {}
 
 async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
-    """Handle message events with detailed debugging"""
+    """Handle message events with processed files"""
     message = event.get("message", {})
-    attachments = message.get("attachment", [])
     text = message.get("text", "").strip()
     user = event.get("user", {})
+    processed_files = event.get("processedFiles", [])
     
     logger.info(f"=== PROCESSING MESSAGE ===")
     logger.info(f"Message text: {text}")
-    logger.info(f"Attachments count: {len(attachments)}")
+    logger.info(f"Processed files count: {len(processed_files)}")
     logger.info(f"User: {user.get('displayName', 'Unknown')}")
     
-    # Debug: Print attachment details
-    for i, attachment in enumerate(attachments):
-        logger.info(f"Attachment {i}: {json.dumps(attachment, indent=2)}")
-    
-    # If no attachments, provide instructions
-    if not attachments:
-        return {
-            "text": "👋 Hello! To generate a quotation, please attach your documents to this message.\n\n"
-                   "📎 **Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
-                   "📊 I'll analyze your documents and create an Excel quotation file.\n\n"
-                   "🔧 **Debug Mode:** This response means no attachments were detected."
-        }
+    # If no processed files, provide instructions
+    if not processed_files:
+        # Check if there were attachments that failed to process
+        attachments = message.get("attachment", [])
+        if attachments:
+            return {
+                "text": "❌ I couldn't process the attached files.\n\n"
+                       "**Common issues:**\n"
+                       "• Files may be corrupted or password-protected\n"
+                       "• Unsupported file format\n"
+                       "• File access permissions\n\n"
+                       "**Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
+                       "Please try uploading the files again or check if they're accessible."
+            }
+        else:
+            return {
+                "text": "👋 Hello! To generate a quotation, please attach your documents to this message.\n\n"
+                       "📎 **Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
+                       "📊 I'll analyze your documents and create an Excel quotation file."
+            }
     
     try:
-        # Process attachments with detailed logging
+        # Process the files that were downloaded by Apps Script
         extracted_texts = []
-        processed_files = []
+        processed_file_names = []
         debug_info = []
         
-        for i, attachment in enumerate(attachments):
-            attachment_name = attachment.get("name", f"unknown_file_{i}")
-            drive_file_id = attachment.get("driveFile", {}).get("id")
+        for file_data in processed_files:
+            file_name = file_data.get("name", "unknown_file")
+            file_content_b64 = file_data.get("content", "")
+            file_size = file_data.get("size", 0)
             
-            logger.info(f"Processing attachment: {attachment_name}")
-            logger.info(f"Drive file ID: {drive_file_id}")
+            logger.info(f"Processing file: {file_name} ({file_size} bytes)")
+            debug_info.append(f"📎 {file_name} ({file_size} bytes)")
             
-            debug_info.append(f"📎 File: {attachment_name}")
-            
-            if not drive_file_id:
-                logger.warning(f"No drive file ID for {attachment_name}")
-                debug_info.append(f"   ❌ No Drive file ID")
+            if not file_content_b64:
+                logger.warning(f"No content for {file_name}")
+                debug_info.append(f"   ❌ No content")
                 continue
-            
-            # Try to download file from Google Drive
-            logger.info(f"Attempting to download file: {drive_file_id}")
-            file_content = await download_drive_file_debug(drive_file_id, event, attachment_name)
-            
-            if not file_content:
-                logger.error(f"Failed to download file: {attachment_name}")
-                debug_info.append(f"   ❌ Download failed")
-                continue
-            
-            debug_info.append(f"   ✅ Downloaded ({len(file_content)} bytes)")
-            
-            # Save temporarily and extract text
-            file_suffix = Path(attachment_name).suffix.lower()
-            logger.info(f"File suffix: {file_suffix}")
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as temp_file:
-                temp_file.write(file_content)
-                temp_file_path = temp_file.name
             
             try:
-                if is_valid_file_type(attachment_name):
+                # Decode base64 content
+                file_content = base64.b64decode(file_content_b64)
+                logger.info(f"Decoded {len(file_content)} bytes for {file_name}")
+                
+                # Validate file type
+                if not is_valid_file_type(file_name):
+                    logger.warning(f"Invalid file type: {file_name}")
+                    debug_info.append(f"   ❌ Unsupported file type")
+                    continue
+                
+                # Save temporarily and extract text
+                file_suffix = Path(file_name).suffix.lower()
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as temp_file:
+                    temp_file.write(file_content)
+                    temp_file_path = temp_file.name
+                
+                try:
                     logger.info(f"Extracting text from: {temp_file_path}")
-                    text_content = extract_text_from_file(temp_file_path, attachment_name)
+                    text_content = extract_text_from_file(temp_file_path, file_name)
                     
                     if text_content and text_content.strip():
                         extracted_texts.append(text_content)
-                        processed_files.append(attachment_name)
-                        debug_info.append(f"   ✅ Text extracted ({len(text_content)} chars)")
-                        logger.info(f"Successfully extracted {len(text_content)} characters from {attachment_name}")
+                        processed_file_names.append(file_name)
+                        debug_info.append(f"   ✅ Extracted {len(text_content)} characters")
+                        logger.info(f"Successfully extracted {len(text_content)} characters from {file_name}")
                     else:
-                        logger.warning(f"No text extracted from {attachment_name}")
+                        logger.warning(f"No text extracted from {file_name}")
                         debug_info.append(f"   ❌ No text content")
-                else:
-                    logger.warning(f"Invalid file type: {attachment_name}")
-                    debug_info.append(f"   ❌ Unsupported file type")
-            except Exception as e:
-                logger.error(f"Error processing {attachment_name}: {str(e)}", exc_info=True)
-                debug_info.append(f"   ❌ Processing error: {str(e)}")
-            finally:
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
+                        
+                except Exception as extract_error:
+                    logger.error(f"Error extracting text from {file_name}: {str(extract_error)}")
+                    debug_info.append(f"   ❌ Extraction error: {str(extract_error)}")
+                    
+                finally:
+                    # Clean up temp file
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
+                        
+            except Exception as decode_error:
+                logger.error(f"Error decoding {file_name}: {str(decode_error)}")
+                debug_info.append(f"   ❌ Decode error: {str(decode_error)}")
         
-        # Create debug response
+        # Create debug message
         debug_message = "\n".join(debug_info)
         
         if not extracted_texts:
@@ -195,30 +202,51 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
                        f"• Scanned PDFs (need OCR)\n"
                        f"• Password-protected files\n"
                        f"• Corrupted files\n"
-                       f"• Empty files\n"
-                       f"• Authentication issues with Google Drive"
+                       f"• Empty files"
             }
         
         # Generate quotation
         combined_text = "\n".join(extracted_texts)
         logger.info(f"Combined text length: {len(combined_text)} characters")
         
-        quotation_data = extract_json_from_response(combined_text)
-        excel_file_path = create_excel_from_quotation(quotation_data)
+        # Extract quotation data
+        try:
+            quotation_data = extract_json_from_response(combined_text)
+            logger.info(f"Generated quotation data: {len(str(quotation_data))} characters")
+        except Exception as json_error:
+            logger.error(f"Error generating quotation: {str(json_error)}")
+            return {
+                "text": f"❌ Error generating quotation from extracted text: {str(json_error)}\n\n"
+                       f"**Files processed:** {', '.join(processed_file_names)}\n"
+                       f"**Text extracted:** {len(combined_text)} characters\n\n"
+                       f"Please ensure your documents contain valid quotation information."
+            }
+        
+        # Create Excel file
+        try:
+            excel_file_path = create_excel_from_quotation(quotation_data)
+            logger.info(f"Created Excel file: {excel_file_path}")
+        except Exception as excel_error:
+            logger.error(f"Error creating Excel file: {str(excel_error)}")
+            return {
+                "text": f"❌ Error creating Excel file: {str(excel_error)}\n\n"
+                       f"**Files processed:** {', '.join(processed_file_names)}\n"
+                       f"**Text extracted:** {len(combined_text)} characters"
+            }
         
         # Store file temporarily
         file_id = str(uuid.uuid4())
         temp_files[file_id] = excel_file_path
         
-        # Use your actual EC2 public IP/domain
+        # Create download URL
         download_url = f"http://51.21.187.10:8000/download/{file_id}"
         
         return {
             "text": f"✅ **Quotation Generated Successfully!**\n\n"
-                   f"📁 Processed files: {', '.join(processed_files)}\n"
-                   f"📊 Download your Excel quotation: [Click here]({download_url})\n\n"
+                   f"📁 **Processed files:** {', '.join(processed_file_names)}\n"
+                   f"📊 **Download your Excel quotation:** [Click here]({download_url})\n\n"
                    f"⏰ Download link expires in 1 hour.\n\n"
-                   f"**Debug Info:**\n{debug_message}",
+                   f"**Processing Details:**\n{debug_message}",
             "cards": [{
                 "sections": [{
                     "widgets": [{
@@ -244,66 +272,6 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
                    f"Please try again or contact support.\n\n"
                    f"**Debug Info:**\n{debug_message if 'debug_message' in locals() else 'No debug info available'}"
         }
-
-async def download_drive_file_debug(file_id: str, event: Dict[Any, Any], filename: str) -> bytes:
-    """Download file from Google Drive with detailed debugging"""
-    logger.info(f"=== DOWNLOADING DRIVE FILE ===")
-    logger.info(f"File ID: {file_id}")
-    logger.info(f"Filename: {filename}")
-    
-    try:
-        # Get the token from the event
-        token = None
-        if "token" in event:
-            token = event["token"]
-        elif "message" in event and "token" in event["message"]:
-            token = event["message"]["token"]
-        
-        if not token:
-            logger.error("No authentication token found in event")
-            return None
-            
-        # Get the download URL from the attachment
-        message = event.get("message", {})
-        attachments = message.get("attachment", [])
-        
-        target_attachment = None
-        for attachment in attachments:
-            if attachment.get("driveFile", {}).get("id") == file_id:
-                target_attachment = attachment
-                break
-        
-        if not target_attachment:
-            logger.error(f"Could not find attachment with file ID: {file_id}")
-            return None
-            
-        drive_file = target_attachment.get("driveFile", {})
-        download_url = drive_file.get("downloadUrl")
-        
-        if not download_url:
-            logger.error("No download URL found in attachment")
-            return None
-            
-        # Download the file using the URL and token
-        async with httpx.AsyncClient() as client:
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Accept": "*/*"
-            }
-            
-            response = await client.get(download_url, headers=headers)
-            
-            if response.status_code == 200:
-                logger.info(f"Successfully downloaded file: {len(response.content)} bytes")
-                return response.content
-            else:
-                logger.error(f"Failed to download file. Status code: {response.status_code}")
-                logger.error(f"Response: {response.text}")
-                return None
-                
-    except Exception as e:
-        logger.error(f"Error downloading Drive file {file_id}: {str(e)}", exc_info=True)
-        return None
 
 @app.post("/process-documents")
 async def process_documents(files: List[UploadFile] = File(...)):
@@ -436,7 +404,7 @@ async def debug_info():
 @app.get("/")
 async def root():
     return {
-        "message": "Document Quotation API with Google Chat Integration - DEBUG MODE",
+        "message": "Document Quotation API with Google Chat Integration",
         "endpoints": {
             "upload": "/process-documents",
             "download": "/download/{file_id}",
