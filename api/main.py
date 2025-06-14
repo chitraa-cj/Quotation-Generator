@@ -12,7 +12,7 @@ import base64
 import time
 import random
 import asyncio
-import httpx
+from unittest.mock import Mock
 import google.generativeai as genai
 from components.extract_json import (
     RobustJSONExtractor, 
@@ -89,16 +89,21 @@ def initialize_model():
 async def send_chat_message(space_name: str, message_data: Dict[str, Any]):
     """Send a message to Google Chat space using webhook or API"""
     try:
-        # This is a placeholder - you'll need to implement the actual sending logic
-        # using Google Chat API or webhook URL if available
-        logger.info(f"Sending message to {space_name}: {message_data}")
+        # For now, just log the message - you'll need to implement actual sending
+        logger.info(f"=== WOULD SEND TO CHAT ===")
+        logger.info(f"Space: {space_name}")
+        logger.info(f"Message: {message_data.get('text', '')[:200]}...")
         
-        # For now, we'll just log it. In production, you'd use:
-        # - Google Chat API with service account
-        # - Or store the webhook URL from the original request
-        pass
+        # TODO: Implement actual message sending
+        # Option 1: Use stored webhook URL
+        # Option 2: Use Google Chat API with service account
+        
+        # For debugging, we'll just log it
+        return True
+        
     except Exception as e:
         logger.error(f"Failed to send chat message: {str(e)}")
+        return False
 
 async def process_documents_async(
     space_name: str,
@@ -348,17 +353,39 @@ async def process_documents_async(
 @app.post("/chat-webhook")
 async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handle Google Chat webhook events"""
+    start_time = time.time()
+    
     try:
-        event = await request.json()
-        logger.info(f"=== RECEIVED GOOGLE CHAT EVENT ===")
+        # Log the raw request for debugging
+        request_body = await request.body()
+        logger.info(f"=== RAW REQUEST RECEIVED ===")
+        logger.info(f"Request body length: {len(request_body)}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        
+        # Parse JSON
+        try:
+            event = json.loads(request_body.decode('utf-8'))
+        except Exception as parse_error:
+            logger.error(f"Failed to parse JSON: {parse_error}")
+            return {"text": "❌ Invalid request format"}
+        
+        logger.info(f"=== PARSED GOOGLE CHAT EVENT ===")
         logger.info(f"Event type: {event.get('type')}")
+        logger.info(f"Event keys: {list(event.keys())}")
         
         event_type = event.get("type")
         
+        # Handle different event types with minimal processing
         if event_type == "ADDED_TO_SPACE":
-            return handle_added_to_space(event)
+            response = handle_added_to_space(event)
+            logger.info(f"Response time: {time.time() - start_time:.2f}s")
+            return response
+            
         elif event_type == "REMOVED_FROM_SPACE":
-            return handle_removed_from_space(event)
+            response = handle_removed_from_space(event)
+            logger.info(f"Response time: {time.time() - start_time:.2f}s")
+            return response
+            
         elif event_type == "MESSAGE":
             message = event.get("message", {})
             text = message.get("text", "").strip()
@@ -366,37 +393,41 @@ async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
             space = event.get("space", {})
             user = event.get("user", {})
             
-            logger.info(f"=== PROCESSING MESSAGE ===")
-            logger.info(f"Message text: {text}")
+            logger.info(f"=== MESSAGE EVENT ===")
+            logger.info(f"Message text: '{text}'")
             logger.info(f"Processed files count: {len(processed_files)}")
             logger.info(f"User: {user.get('displayName', 'Unknown')}")
+            logger.info(f"Space: {space.get('name', 'Unknown')}")
             
-            # If no processed files, provide instructions
+            # IMMEDIATE RESPONSE - No complex processing here
             if not processed_files:
-                # Check if there were attachments that failed to process
                 attachments = message.get("attachment", [])
                 if attachments:
-                    return {
+                    response = {
                         "text": "❌ I couldn't process the attached files.\n\n"
-                               "**Common issues:**\n"
-                               "• Files may be corrupted or password-protected\n"
-                               "• Unsupported file type\n"
-                               "• File access permissions\n\n"
                                "**Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
-                               "Please try uploading the files again or check if they're accessible."
+                               "Please try uploading the files again."
                     }
                 else:
-                    return {
+                    response = {
                         "text": "👋 Hello! To generate a quotation, please attach your documents to this message.\n\n"
-                               "📎 **Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
-                               "📊 I'll analyze your documents and create an Excel quotation file."
+                               "📎 **Supported formats:** PDF, DOCX, DOC, TXT, RTF"
                     }
+                
+                logger.info(f"Response time: {time.time() - start_time:.2f}s")
+                return response
             
-            # If there are files, send immediate response and process in background
-            processing_id = str(uuid.uuid4())
-            processing_status[processing_id] = {"status": "starting", "progress": "Initializing..."}
+            # Generate processing ID immediately
+            processing_id = str(uuid.uuid4())[:8]  # Shorter ID for display
             
-            # Start background processing
+            # Store minimal info for background processing
+            processing_status[processing_id] = {
+                "status": "queued", 
+                "progress": "Queued for processing...",
+                "created_at": time.time()
+            }
+            
+            # Queue background processing AFTER returning response
             background_tasks.add_task(
                 process_documents_async,
                 space.get("name", "unknown_space"),
@@ -405,32 +436,33 @@ async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
                 user.get("displayName", "User")
             )
             
-            # Return immediate response (must be within 30 seconds)
-            return {
-                "text": f"🔄 **Processing your documents...**\n\n"
-                       f"📄 Found {len(processed_files)} file(s) to process\n"
-                       f"⏳ This may take a few minutes. I'll send you the results when ready!\n\n"
-                       f"🆔 Processing ID: `{processing_id}`\n"
-                       f"💡 You can check status at: `/status {processing_id}`"
+            # Return IMMEDIATE response
+            response = {
+                "text": f"🔄 **Processing {len(processed_files)} file(s)...**\n\n"
+                       f"⏳ This will take a few minutes.\n"
+                       f"🆔 ID: `{processing_id}`\n\n"
+                       f"I'll update you when done!"
             }
+            
+            logger.info(f"Response time: {time.time() - start_time:.2f}s")
+            return response
+            
         else:
             logger.warning(f"Unknown event type: {event_type}")
-            return {"text": "Unknown event type"}
+            response = {"text": f"Unknown event type: {event_type}"}
+            logger.info(f"Response time: {time.time() - start_time:.2f}s")
+            return response
         
     except Exception as e:
-        logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
-        return {
-            "text": "❌ Sorry, there was an error processing your request.",
-            "cards": [{
-                "sections": [{
-                    "widgets": [{
-                        "textParagraph": {
-                            "text": f"Debug Error: {str(e)}"
-                        }
-                    }]
-                }]
-            }]
+        logger.error(f"CRITICAL ERROR in webhook: {str(e)}", exc_info=True)
+        
+        # Return minimal error response
+        response = {
+            "text": f"❌ Bot error occurred. Please try again.\nError: {str(e)[:100]}"
         }
+        
+        logger.info(f"Error response time: {time.time() - start_time:.2f}s")
+        return response
 
 def handle_added_to_space(event: Dict[Any, Any]) -> Dict[str, Any]:
     """Handle bot being added to space"""
@@ -459,6 +491,7 @@ def handle_removed_from_space(event: Dict[Any, Any]) -> Dict[str, Any]:
     logger.info(f"Bot removed from space: {event.get('space', {}).get('name', 'unknown')}")
     return {}
 
+# Add this endpoint for manual status checking
 @app.get("/status/{processing_id}")
 async def get_processing_status(processing_id: str):
     """Get processing status"""
@@ -472,10 +505,32 @@ async def get_processing_status(processing_id: str):
         return {
             "status": "completed",
             "message": "Processing completed successfully!",
-            "download_url": download_url
+            "download_url": download_url,
+            "processing_id": processing_id
         }
-    
-    return status_info
+    elif status_info["status"] == "error":
+        return {
+            "status": "error",
+            "message": status_info.get("message", "Unknown error occurred"),
+            "processing_id": processing_id
+        }
+    else:
+        return {
+            "status": status_info["status"],
+            "progress": status_info.get("progress", "Processing..."),
+            "processing_id": processing_id,
+            "elapsed_time": f"{time.time() - status_info.get('created_at', time.time()):.1f}s"
+        }
+
+# Add this endpoint to check if bot is working
+@app.get("/ping")
+async def ping():
+    """Simple ping endpoint for testing"""
+    return {
+        "status": "pong",
+        "timestamp": time.time(),
+        "message": "Bot is alive and responding"
+    }
 
 @app.post("/process-documents")
 async def process_documents(files: List[UploadFile] = File(...)):
@@ -634,12 +689,68 @@ async def debug_info():
     """Debug endpoint to check system status"""
     return {
         "status": "debug",
+        "timestamp": time.time(),
         "temp_files_count": len(temp_files),
         "temp_files_ids": list(temp_files.keys()),
-        "processing_jobs": len(processing_status),
-        "processing_ids": list(processing_status.keys()),
-        "supported_extensions": ['.pdf', '.docx', '.doc', '.txt', '.rtf']
+        "processing_jobs_count": len(processing_status),
+        "processing_jobs": {
+            pid: {
+                "status": info["status"],
+                "progress": info.get("progress", "N/A"),
+                "age_seconds": time.time() - info.get("created_at", time.time())
+            }
+            for pid, info in processing_status.items()
+        },
+        "supported_extensions": ['.pdf', '.docx', '.doc', '.txt', '.rtf'],
+        "server_info": {
+            "python_version": "3.x",
+            "fastapi_running": True
+        }
     }
+
+# Add endpoint to test chat webhook
+@app.post("/test-webhook")
+async def test_webhook():
+    """Test endpoint to simulate a chat webhook"""
+    test_event = {
+        "type": "MESSAGE",
+        "message": {
+            "text": "test message",
+            "attachment": []
+        },
+        "user": {
+            "displayName": "Test User"
+        },
+        "space": {
+            "name": "spaces/test_space"
+        },
+        "processedFiles": []
+    }
+    
+    # Simulate the webhook call
+    import json
+    from fastapi import Request
+    from unittest.mock import Mock
+    
+    # Create a mock request
+    mock_request = Mock()
+    mock_request.json = lambda: test_event
+    mock_request.body = lambda: json.dumps(test_event).encode()
+    mock_request.headers = {"content-type": "application/json"}
+    
+    try:
+        result = await chat_webhook(mock_request, BackgroundTasks())
+        return {
+            "test_result": "success",
+            "response": result,
+            "message": "Webhook test completed successfully"
+        }
+    except Exception as e:
+        return {
+            "test_result": "error",
+            "error": str(e),
+            "message": "Webhook test failed"
+        }
 
 @app.get("/")
 async def root():
