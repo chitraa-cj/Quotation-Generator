@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import List, Dict, Any
 import json
 import base64
-
-# Import your custom modules
-from components.extract_json import extract_json_from_response
+import time
+import random
+import google.generativeai as genai
+from components.extract_json import RobustJSONExtractor, extract_json_from_response
 from components.create_excel import create_excel_from_quotation
+from components.generate_quotation import generate_quotation_prompt
 from utils import extract_text_from_file
 
 app = FastAPI()
@@ -32,6 +34,42 @@ logger = logging.getLogger(__name__)
 
 # Store for temporary files (use Redis/database in production)
 temp_files = {}
+
+def retry_with_backoff(func, max_retries=3, initial_delay=1, max_delay=10):
+    """Retry a function with exponential backoff"""
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            if attempt == max_retries - 1:  # Last attempt
+                raise e
+            
+            # Check if it's a model overload or timeout error
+            if "503" in str(e) or "504" in str(e) or "overload" in str(e).lower():
+                delay = min(initial_delay * (2 ** attempt) + random.uniform(0, 1), max_delay)
+                time.sleep(delay)
+                continue
+            else:
+                raise e
+
+def generate_quotation_with_retry(model, prompt):
+    """Generate quotation with retry logic"""
+    def _generate():
+        response = model.generate_content(prompt)
+        if not response or not response.text:
+            raise ValueError("Empty response from model")
+        return response.text
+    
+    return retry_with_backoff(_generate)
+
+def initialize_model():
+    """Initialize the Gemini model"""
+    try:
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        return model
+    except Exception as e:
+        logger.error(f"Failed to initialize model: {str(e)}")
+        return None
 
 @app.post("/chat-webhook")
 async def chat_webhook(request: Request):
@@ -209,32 +247,18 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         combined_text = "\n".join(extracted_texts)
         logger.info(f"Combined text length: {len(combined_text)} characters")
         
-        # Extract quotation data
-        try:
-            quotation_data = extract_json_from_response(combined_text)
-            logger.info(f"Generated quotation data: {len(str(quotation_data))} characters")
-        except Exception as json_error:
-            logger.error(f"Error generating quotation: {str(json_error)}")
-            return {
-                "text": f"❌ Error generating quotation from extracted text: {str(json_error)}\n\n"
-                       f"**Files processed:** {', '.join(processed_file_names)}\n"
-                       f"**Text extracted:** {len(combined_text)} characters\n\n"
-                       f"Please ensure your documents contain valid quotation information."
-            }
+        # Initialize model and extractor
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        extractor = RobustJSONExtractor(model)
+        
+        # Extract JSON using RobustJSONExtractor
+        extraction_result = extractor.extract(combined_text)
+        quotation_data = extraction_result.data
         
         # Create Excel file
-        try:
-            excel_file_path = create_excel_from_quotation(quotation_data)
-            logger.info(f"Created Excel file: {excel_file_path}")
-        except Exception as excel_error:
-            logger.error(f"Error creating Excel file: {str(excel_error)}")
-            return {
-                "text": f"❌ Error creating Excel file: {str(excel_error)}\n\n"
-                       f"**Files processed:** {', '.join(processed_file_names)}\n"
-                       f"**Text extracted:** {len(combined_text)} characters"
-            }
+        excel_file_path = create_excel_from_quotation(quotation_data)
         
-        # Store file temporarily
+        # Store file temporarily with unique ID
         file_id = str(uuid.uuid4())
         temp_files[file_id] = excel_file_path
         
@@ -336,23 +360,57 @@ async def process_documents(files: List[UploadFile] = File(...)):
         
         logger.info(f"Combined extracted text length: {len(input_docs_text)} characters")
         
-        # Generate quotation JSON
-        quotation_data = extract_json_from_response(input_docs_text)
+        # Initialize model and generate quotation
+        model = initialize_model()
+        if not model:
+            raise HTTPException(status_code=500, detail="Failed to initialize AI model")
         
-        # Create Excel file
-        excel_file_path = create_excel_from_quotation(quotation_data)
-        
-        # Store file temporarily with unique ID
-        file_id = str(uuid.uuid4())
-        temp_files[file_id] = excel_file_path
-        
-        return {
-            "message": "Quotation generated successfully!",
-            "download_url": f"/download/{file_id}",
-            "file_id": file_id,
-            "processed_files": processed_files,
-            "text_length": len(input_docs_text)
-        }
+        # Generate quotation with retry logic
+        try:
+            # Generate prompt and get response
+            prompt = generate_quotation_prompt([], input_docs_text)  # Empty examples list for now
+            response_text = generate_quotation_with_retry(model, prompt)
+            
+            if not response_text:
+                raise HTTPException(status_code=500, detail="Empty response from AI model")
+            
+            # Print raw response to terminal for debugging
+            logger.info("\n=== Raw AI Response ===")
+            logger.info(response_text)
+            
+            # Extract and parse the response
+            try:
+                quotation_data = extract_json_from_response(response_text)
+                if not quotation_data:
+                    raise HTTPException(status_code=500, detail="Failed to parse the AI response into a valid quotation format")
+                
+                # Create Excel file with proper formatting
+                excel_file_path = create_excel_from_quotation(quotation_data)
+                
+                if not os.path.exists(excel_file_path):
+                    raise HTTPException(status_code=500, detail="Failed to create Excel file")
+                
+                # Store file temporarily with unique ID
+                file_id = str(uuid.uuid4())
+                temp_files[file_id] = excel_file_path
+                
+                return {
+                    "message": "Quotation generated successfully!",
+                    "download_url": f"/download/{file_id}",
+                    "file_id": file_id,
+                    "processed_files": processed_files,
+                    "text_length": len(input_docs_text),
+                    "extraction_strategy": "direct_parse",  # Since we're using extract_json_from_response
+                    "needs_review": False
+                }
+                
+            except Exception as e:
+                logger.error(f"Error parsing AI response: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
+            
+        except Exception as e:
+            logger.error(f"Error generating quotation: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error generating quotation: {str(e)}")
         
     except HTTPException:
         raise

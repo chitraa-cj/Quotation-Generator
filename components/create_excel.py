@@ -3,7 +3,35 @@ import pandas as pd
 import tempfile
 import os
 import re
+import logging
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
+def sanitize_sheet_name(name: str) -> str:
+    """Sanitize sheet name to comply with Excel restrictions"""
+    if not name or not isinstance(name, str):
+        logger.warning("Invalid sheet name provided, using default name")
+        return "Unnamed Section"
+
+    # Remove invalid characters: []:*?/\
+    sanitized = re.sub(r'[\[\]:*?/\\]', '', name)
+
+    # Ensure the name is not "History" (case-insensitive)
+    if sanitized.lower() == "history":
+        sanitized = "HistoryRenamed"
+
+    # Truncate to 31 characters (Excel limit)
+    if len(sanitized) > 31:
+        logger.warning(f"Sheet name '{sanitized}' exceeds 31 characters, truncating")
+        sanitized = sanitized[:31].rstrip()
+
+    # Ensure the name is not empty after sanitization
+    if not sanitized.strip():
+        logger.warning("Sheet name is empty after sanitization, using default name")
+        return "Unnamed Section"
+
+    return sanitized
 
 def map_data_to_template_columns(quotation_data, template_columns):
     """Map quotation data to template columns"""
@@ -93,7 +121,7 @@ def extract_template_columns(template_file):
             df = pd.read_excel(template_file)
         return list(df.columns)
     except Exception as e:
-        print(f"Error reading template columns: {str(e)}")
+        logger.error(f"Error reading template columns: {str(e)}")
         return None
     
 def attempt_fix_json(raw_text):
@@ -122,14 +150,14 @@ def attempt_fix_json(raw_text):
 
 def create_excel_from_quotation(quotation_data, template=None):
     """Create an Excel file from quotation data with robust JSON handling"""
-    print("\n=== Starting Excel Generation ===")
+    logger.info("\n=== Starting Excel Generation ===")
     
     # Convert quotation_data to JSON string if it's a dict
     if isinstance(quotation_data, dict):
         try:
             json_str = json5.dumps(quotation_data)
         except Exception as e:
-            print(f"Error converting dict to JSON: {str(e)}")
+            logger.error(f"Error converting dict to JSON: {str(e)}")
             json_str = str(quotation_data)
     else:
         json_str = str(quotation_data)
@@ -138,13 +166,13 @@ def create_excel_from_quotation(quotation_data, template=None):
     try:
         data = json5.loads(json_str)
     except json5.Json5DecodeError as e:
-        print(f"Initial JSON5 parse failed: {e}")
+        logger.warning(f"Initial JSON5 parse failed: {e}")
         fixed_json = attempt_fix_json(json_str)
         try:
             data = json5.loads(fixed_json)
-            print("Recovered from malformed JSON")
+            logger.info("Recovered from malformed JSON")
         except Exception as e2:
-            print(f"Failed to fix JSON: {e2}")
+            logger.error(f"Failed to fix JSON: {e2}")
             raise ValueError("Invalid JSON data structure")
     
     # Ensure data has required structure
@@ -178,6 +206,9 @@ def create_excel_from_quotation(quotation_data, template=None):
     # Process sections
     for section in data.get('sections', []):
         section_name = section.get('name', 'Unnamed Section')
+        # Sanitize the sheet name
+        sanitized_sheet_name = sanitize_sheet_name(section_name)
+        logger.debug(f"Original sheet name: '{section_name}', Sanitized sheet name: '{sanitized_sheet_name}'")
         rows = []
         
         # Add section header
@@ -212,12 +243,11 @@ def create_excel_from_quotation(quotation_data, template=None):
                 if df[col].dtype == 'object':
                     df[col] = df[col].astype(str)
             
-            # Write to Excel
-            sheet_name = str(section_name)[:31]  # Excel sheet names limited to 31 chars
-            df.to_excel(excel_buffer, sheet_name=sheet_name, index=False)
+            # Write to Excel using sanitized sheet name
+            df.to_excel(excel_buffer, sheet_name=sanitized_sheet_name, index=False)
             
             # Get worksheet and apply formatting
-            worksheet = excel_buffer.sheets[sheet_name]
+            worksheet = excel_buffer.sheets[sanitized_sheet_name]
             
             # Apply header format to the first row
             for col_num, value in enumerate(df.columns):
@@ -264,5 +294,5 @@ def create_excel_from_quotation(quotation_data, template=None):
         return 'quotation.xlsx'
         
     except Exception as e:
-        print(f"Error saving Excel file: {str(e)}")
+        logger.error(f"Error saving Excel file: {str(e)}")
         raise

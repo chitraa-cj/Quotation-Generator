@@ -2,11 +2,243 @@ import json5
 import json
 import re
 import logging
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Tuple
 import google.generativeai as genai
 from components.repair_json_llm import repair_json_with_llm
+from enum import Enum
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+class ExtractionStrategy(Enum):
+    DIRECT_PARSE = "direct_parse"
+    MARKDOWN_BLOCK = "markdown_block"
+    PARTIAL_REPAIR = "partial_repair"
+    LLM_REPAIR = "llm_repair"
+    AGGRESSIVE_REPAIR = "aggressive_repair"
+    STRUCTURED_PARSE = "structured_parse"
+    FALLBACK = "fallback"
+
+@dataclass
+class ExtractionResult:
+    data: Dict[str, Any]
+    strategy_used: ExtractionStrategy
+    needs_review: bool
+    original_text: str
+    error_message: Optional[str] = None
+
+class QuotationJSONGenerator:
+    def __init__(self, model=None):
+        self.model = model or initialize_model()
+        self.prompt_templates = {
+            "structured": """
+            Convert the following text into a valid JSON object. Follow these requirements:
+            1. All property names must be in quotes
+            2. All string values must be in quotes
+            3. Use proper JSON syntax for arrays and objects
+            4. Include all relevant information from the text
+            
+            Text to convert:
+            {text}
+            
+            Expected format:
+            {{
+                "property": "value",
+                "array": ["item1", "item2"],
+                "nested": {{
+                    "key": "value"
+                }}
+            }}
+            """,
+            
+            "example_based": """
+            Here's an example of how to convert text to JSON:
+            
+            Input text:
+            Company: Acme Corp
+            Address: 123 Main St
+            Projects: Web Dev, Mobile App
+            
+            Expected output:
+            {{
+                "company": "Acme Corp",
+                "address": "123 Main St",
+                "projects": ["Web Dev", "Mobile App"]
+            }}
+            
+            Now convert this text:
+            {text}
+            """,
+            
+            "simple": """
+            Convert this text to JSON:
+            {text}
+            """
+        }
+    
+    def generate_json(self, text: str, max_retries: int = 3) -> Dict[str, Any]:
+        for attempt in range(max_retries):
+            try:
+                # Try different prompt strategies
+                if attempt == 0:
+                    prompt = self.prompt_templates["structured"].format(text=text)
+                elif attempt == 1:
+                    prompt = self.prompt_templates["example_based"].format(text=text)
+                else:
+                    prompt = self.prompt_templates["simple"].format(text=text)
+                
+                response = self.model.generate_content(prompt)
+                result = extract_json_from_response(response.text)
+                if result:
+                    return result
+            except Exception as e:
+                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                continue
+        
+        return create_fallback_structure(text)
+
+class RobustJSONExtractor:
+    def __init__(self, model=None):
+        self.json_generator = QuotationJSONGenerator(model)
+        self.model = model
+    
+    def extract(self, text: str) -> ExtractionResult:
+        """Try multiple strategies to extract JSON from text"""
+        if not text:
+            return ExtractionResult(
+                data={},
+                strategy_used=ExtractionStrategy.FALLBACK,
+                needs_review=False,
+                original_text=text,
+                error_message="Empty input text"
+            )
+        
+        # Strategy 1: Direct JSON parsing
+        try:
+            data = json.loads(text)
+            return ExtractionResult(
+                data=data,
+                strategy_used=ExtractionStrategy.DIRECT_PARSE,
+                needs_review=False,
+                original_text=text
+            )
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 2: Markdown code block extraction
+        try:
+            cleaned_text = clean_json_text(text)
+            data = json.loads(cleaned_text)
+            return ExtractionResult(
+                data=data,
+                strategy_used=ExtractionStrategy.MARKDOWN_BLOCK,
+                needs_review=False,
+                original_text=text
+            )
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 3: Partial JSON repair
+        try:
+            repaired_text = fix_json_syntax(text)
+            data = json.loads(repaired_text)
+            return ExtractionResult(
+                data=data,
+                strategy_used=ExtractionStrategy.PARTIAL_REPAIR,
+                needs_review=False,
+                original_text=text
+            )
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 4: LLM-based repair
+        try:
+            if self.model:
+                repaired_text = repair_json_with_llm(text, self.model)
+                data = json.loads(repaired_text)
+                return ExtractionResult(
+                    data=data,
+                    strategy_used=ExtractionStrategy.LLM_REPAIR,
+                    needs_review=True,
+                    original_text=text
+                )
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning(f"LLM repair failed: {str(e)}")
+        
+        # Strategy 5: Aggressive text repair
+        try:
+            repaired_text = aggressive_json_repair(text)
+            data = json.loads(repaired_text)
+            return ExtractionResult(
+                data=data,
+                strategy_used=ExtractionStrategy.AGGRESSIVE_REPAIR,
+                needs_review=True,
+                original_text=text
+            )
+        except json.JSONDecodeError:
+            pass
+        
+        # Strategy 6: Structured text parsing
+        try:
+            data = self._parse_structured_text(text)
+            return ExtractionResult(
+                data=data,
+                strategy_used=ExtractionStrategy.STRUCTURED_PARSE,
+                needs_review=True,
+                original_text=text
+            )
+        except Exception as e:
+            logger.warning(f"Structured parsing failed: {str(e)}")
+        
+        # Strategy 7: Smart fallback
+        fallback_data = create_fallback_structure(text)
+        return ExtractionResult(
+            data=fallback_data,
+            strategy_used=ExtractionStrategy.FALLBACK,
+            needs_review=True,
+            original_text=text,
+            error_message="All extraction strategies failed, using fallback structure"
+        )
+    
+    def _parse_structured_text(self, text: str) -> Dict[str, Any]:
+        """Parse text that appears to be structured but not in JSON format"""
+        result = {}
+        current_section = None
+        current_items = []
+        
+        for line in text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Check for section headers
+            if line.endswith(':'):
+                if current_section and current_items:
+                    result[current_section] = current_items
+                current_section = line[:-1].lower().replace(' ', '_')
+                current_items = []
+                continue
+            
+            # Check for key-value pairs
+            if ':' in line:
+                key, value = line.split(':', 1)
+                key = key.strip().lower().replace(' ', '_')
+                value = value.strip()
+                
+                # Handle multiple values
+                if ',' in value:
+                    values = [v.strip() for v in value.split(',')]
+                    result[key] = values
+                else:
+                    result[key] = value
+            else:
+                current_items.append(line)
+        
+        # Add the last section
+        if current_section and current_items:
+            result[current_section] = current_items
+        
+        return result
 
 def clean_json_text(text: str) -> str:
     """Clean and normalize JSON text with robust error handling"""
