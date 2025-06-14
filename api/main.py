@@ -12,10 +12,18 @@ import base64
 import time
 import random
 import google.generativeai as genai
-from components.extract_json import RobustJSONExtractor, extract_json_from_response
+from components.extract_json import (
+    RobustJSONExtractor, 
+    extract_json_from_response,
+    extract_json_content,
+    aggressive_json_repair,
+    repair_json_with_llm,
+    create_fallback_structure
+)
 from components.create_excel import create_excel_from_quotation
 from components.generate_quotation import generate_quotation_prompt
 from utils import extract_text_from_file
+import json5
 
 app = FastAPI()
 
@@ -156,7 +164,7 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
                 "text": "❌ I couldn't process the attached files.\n\n"
                        "**Common issues:**\n"
                        "• Files may be corrupted or password-protected\n"
-                       "• Unsupported file format\n"
+                       "• Unsupported file type\n"
                        "• File access permissions\n\n"
                        "**Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
                        "Please try uploading the files again or check if they're accessible."
@@ -286,9 +294,54 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
             logger.info("\n=== Raw AI Response ===")
             logger.info(response_text)
             
-            # Extract and parse the response
+            # Extract and parse the response using the same method as Streamlit
             try:
-                quotation_data = extract_json_from_response(response_text)
+                # First try direct JSON parsing
+                try:
+                    json_content = extract_json_content(response_text)
+                    quotation_data = json.loads(json_content)
+                    logger.info("Successfully parsed JSON with standard parser")
+                except Exception as e:
+                    logger.warning(f"Standard JSON parsing failed: {str(e)}")
+                    # Try json5 parsing
+                    try:
+                        json_content = extract_json_content(response_text)
+                        quotation_data = json5.loads(json_content)
+                        logger.info("Successfully parsed JSON with json5")
+                    except Exception as e:
+                        logger.warning(f"JSON5 parsing failed: {str(e)}")
+                        # Try aggressive repair
+                        try:
+                            repaired_text = aggressive_json_repair(response_text)
+                            logger.info("Repaired text: " + (repaired_text[:200] + "..." if len(repaired_text) > 200 else repaired_text))
+                            
+                            # Try both json and json5
+                            for parser in [json.loads, json5.loads]:
+                                try:
+                                    quotation_data = parser(repaired_text)
+                                    logger.info("Successfully parsed JSON with aggressive repair")
+                                    break
+                                except Exception:
+                                    continue
+                        except Exception as e:
+                            logger.warning(f"Aggressive repair failed: {str(e)}")
+                            # Try LLM repair if available
+                            try:
+                                llm_repaired_text = repair_json_with_llm(response_text, model)
+                                if llm_repaired_text:
+                                    for parser in [json.loads, json5.loads]:
+                                        try:
+                                            quotation_data = parser(llm_repaired_text)
+                                            logger.info("Successfully parsed JSON with LLM repair")
+                                            break
+                                        except Exception:
+                                            continue
+                            except Exception as e:
+                                logger.warning(f"LLM repair failed: {str(e)}")
+                                # Last resort: create fallback structure
+                                logger.warning("All parsing methods failed, creating fallback structure")
+                                quotation_data = create_fallback_structure(response_text)
+                
                 if not quotation_data:
                     raise HTTPException(status_code=500, detail="Failed to parse the AI response into a valid quotation format")
                 
