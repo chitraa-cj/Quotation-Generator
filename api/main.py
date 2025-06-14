@@ -65,11 +65,8 @@ def generate_quotation_with_retry(model, prompt):
 def initialize_model():
     """Initialize the Gemini model"""
     try:
-        # Configure the API key from environment variable
-        api_key = os.getenv('GOOGLE_API_KEY')
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY environment variable is not set")
-        
+        # Use the API key directly
+        api_key = 'AIzaSyC_6vPDvqyOnJTWl434LScSxh_ndAjmxDI'
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel('gemini-2.0-flash')
         return model
