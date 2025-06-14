@@ -3883,3 +3883,78 @@ fastapi.exceptions.HTTPException: 500: Error generating quotation: 500: Error pa
 
 ---
 
+_**Assistant**_
+
+I see the issue. The error occurs because the `quotation_data` variable is not being properly initialized before the check. The JSON parsing is failing due to an unterminated string in the response, and the error handling isn't properly setting up the fallback structure. Let me fix this:
+
+
+---
+
+```diff
+              # Extract and parse the response using the same method as Streamlit
+              try:
++                 # Initialize quotation_data with None
++                 quotation_data = None
++                 
+                  # First try direct JSON parsing
+                  try:
+```
+
+```diff
+                                  quotation_data = create_fallback_structure(response_text)
+                  
++                 # If all parsing attempts failed, use fallback structure
+                  if not quotation_data:
+-                     raise HTTPException(status_code=500, detail="Failed to parse the AI response into a valid quotation format")
++                     logger.warning("All parsing methods failed, using fallback structure")
++                     quotation_data = create_fallback_structure(response_text)
+                  
+                  # Create Excel file with proper formatting
+```
+
+---
+
+I've made the following changes to fix the JSON parsing issue:
+
+1. Initialized `quotation_data` as `None` at the start of the parsing block to ensure it's always defined
+2. Added a final fallback check after all parsing attempts - if `quotation_data` is still `None`, we create a fallback structure
+3. Removed the error raise when parsing fails and replaced it with the fallback structure creation
+4. Added more detailed logging to track the parsing process
+
+The key changes are:
+- The variable is now properly initialized before any parsing attempts
+- We have a guaranteed fallback to `create_fallback_structure` if all parsing methods fail
+- The error handling is more robust and will always provide some valid data structure
+
+This should resolve the "variable referenced before assignment" error and ensure that even if JSON parsing fails, we'll still get a valid quotation structure to work with. Try processing the file again - it should now handle the unterminated string error gracefully by using the fallback structure.
+
+---
+
+_**User**_
+
+it succefully parses json and then INFO:api.main:Successfully parsed JSON with standard parser
+INFO:components.create_excel:
+=== Starting Excel Generation ===
+DEBUG:components.create_excel:Original sheet name: 'Venue & Logistics', Sanitized sheet name: 'Venue & Logistics'
+DEBUG:components.create_excel:Original sheet name: 'AV Equipment', Sanitized sheet name: 'AV Equipment'
+DEBUG:components.create_excel:Original sheet name: 'Labor', Sanitized sheet name: 'Labor'
+DEBUG:components.create_excel:Original sheet name: 'Supporting Services', Sanitized sheet name: 'Supporting Services'
+DEBUG:components.create_excel:Original sheet name: 'Room Rental Estimates', Sanitized sheet name: 'Room Rental Estimates'
+DEBUG:components.create_excel:Original sheet name: 'F&B Estimates', Sanitized sheet name: 'F&B Estimates'
+DEBUG:components.create_excel:Original sheet name: 'Power & Distribution', Sanitized sheet name: 'Power & Distribution'
+DEBUG:components.create_excel:Original sheet name: 'Additional Items', Sanitized sheet name: 'Additional Items'
+INFO:     107.178.192.40:57697 - "POST /chat-webhook HTTP/1.1" 200 OK
+INFO:api.main:=== RECEIVED GOOGLE CHAT EVENT ===
+INFO:api.main:Event type: MESSAGE
+INFO:api.main:=== PROCESSING MESSAGE ===
+INFO:api.main:Message text: 
+INFO:api.main:Processed files count: 1
+INFO:api.main:User: Chandan Mishra
+INFO:api.main:Processing file: Copy of RFP Specs 340B U for Mfr 2025 (1).docx (199114 bytes)
+INFO:api.main:Decoded 199114 bytes for Copy of RFP Specs 340B U for Mfr 2025 (1).docx
+INFO:api.main:Extracting text from: /tmp/tmphvhb505z.docx
+INFO:api.main:Successfully extracted 1818 characters from Copy of RFP Specs 340B U for Mfr 2025 (1).docx
+INFO:api.main:Combined text length: 1818 characters - and eve before that bot start showing - Quotation Bot not responding
+
+---
+

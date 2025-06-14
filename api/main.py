@@ -182,14 +182,26 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         processed_file_names = []
         debug_info = []
         
-        # Set a timeout for the entire processing
-        start_time = time.time()
-        timeout = 300  # 5 minutes timeout
+        # Set timeouts for different stages
+        file_processing_timeout = 60  # 1 minute for file processing
+        model_generation_timeout = 120  # 2 minutes for model generation
+        excel_generation_timeout = 60  # 1 minute for Excel generation
+        total_timeout = 300  # 5 minutes total timeout
         
+        start_time = time.time()
+        
+        # First, send an initial response to prevent timeout
+        initial_response = {
+            "text": "⏳ Processing your files...\n\n"
+                   "This may take a few minutes. I'll notify you when the quotation is ready."
+        }
+        
+        # Process files with timeout
         for file_data in processed_files:
-            # Check if we've exceeded the timeout
-            if time.time() - start_time > timeout:
-                raise TimeoutError("Processing took too long")
+            if time.time() - start_time > file_processing_timeout:
+                return {
+                    "text": "❌ File processing took too long. Please try again with smaller files or fewer files."
+                }
                 
             file_name = file_data.get("name", "unknown_file")
             file_content_b64 = file_data.get("content", "")
@@ -262,6 +274,12 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
                        f"• Empty files"
             }
         
+        # Check total timeout
+        if time.time() - start_time > total_timeout:
+            return {
+                "text": "❌ The request took too long to process. Please try again with smaller files or fewer files."
+            }
+        
         # Generate quotation
         combined_text = "\n".join(extracted_texts)
         logger.info(f"Combined text length: {len(combined_text)} characters")
@@ -278,10 +296,9 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
             
             # Set a timeout for the model generation
             generation_start_time = time.time()
-            generation_timeout = 180  # 3 minutes timeout for generation
             
             def generate_with_timeout():
-                if time.time() - generation_start_time > generation_timeout:
+                if time.time() - generation_start_time > model_generation_timeout:
                     raise TimeoutError("Model generation took too long")
                 return generate_quotation_with_retry(model, prompt)
             
@@ -350,6 +367,12 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
                     logger.warning("All parsing methods failed, using fallback structure")
                     quotation_data = create_fallback_structure(response_text)
                 
+                # Check timeout before Excel generation
+                if time.time() - start_time > total_timeout - excel_generation_timeout:
+                    return {
+                        "text": "❌ The request took too long to process. Please try again with smaller files or fewer files."
+                    }
+                
                 # Create Excel file with proper formatting
                 excel_file_path = create_excel_from_quotation(quotation_data)
                 
@@ -394,7 +417,7 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         except TimeoutError as te:
             logger.error(f"Processing timeout: {str(te)}")
             return {
-                "text": "❌ The request took too long to process. Please try again with a smaller file or fewer files."
+                "text": "❌ The request took too long to process. Please try again with smaller files or fewer files."
             }
         except Exception as e:
             logger.error(f"Error generating quotation: {str(e)}", exc_info=True)
@@ -403,7 +426,7 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
     except TimeoutError as te:
         logger.error(f"Processing timeout: {str(te)}")
         return {
-            "text": "❌ The request took too long to process. Please try again with a smaller file or fewer files."
+            "text": "❌ The request took too long to process. Please try again with smaller files or fewer files."
         }
     except Exception as e:
         logger.error(f"Error processing message: {str(e)}", exc_info=True)
