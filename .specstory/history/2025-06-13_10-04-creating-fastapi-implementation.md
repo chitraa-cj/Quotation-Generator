@@ -3669,7 +3669,31 @@ I apologize for the difficulty with the automatic edits. Since the automatic edi
 
 1. Open `utils.py`
 2. Find the `extract_text_from_pdf` function
-3. Fi
+3. Fix the indentation by ensuring the `with` block is properly indented under the `try` statement
+4. The indentation should look like this:
+```python
+def extract_text_from_pdf(file_path):
+    """Extract text from PDF file with improved cleaning"""
+    text = ""
+    try:
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            # ... rest of the function ...
+```
+
+The key is to make sure the `with` statement is indented under the `try` block. Would you like me to try another approach to fix this?
+
+---
+
+_**User**_
+
+when for process-document endpoint the quotation is working then why not properly for chat-webhook
+
+---
+
+_**Assistant**_
+
+
 
 ---
 
