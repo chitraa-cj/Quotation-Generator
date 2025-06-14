@@ -113,6 +113,13 @@ async def process_documents_async(
 ):
     """Process documents asynchronously and send result to chat"""
     try:
+        # Send initial status update
+        await send_chat_message(space_name, {
+            "text": f"🔄 **Processing Started**\n\n"
+                   f"⏳ Extracting text from files...\n"
+                   f"🆔 ID: `{processing_id}`"
+        })
+        
         processing_status[processing_id] = {"status": "processing", "progress": "Extracting text..."}
         
         # Process the files that were downloaded by Apps Script
@@ -198,6 +205,14 @@ async def process_documents_async(
             await send_chat_message(space_name, error_message)
             return
         
+        # Send progress update
+        await send_chat_message(space_name, {
+            "text": f"🔄 **Processing Update**\n\n"
+                   f"✅ Text extraction complete\n"
+                   f"⏳ Generating quotation...\n"
+                   f"🆔 ID: `{processing_id}`"
+        })
+        
         # Update status
         processing_status[processing_id] = {"status": "processing", "progress": "Generating quotation..."}
         
@@ -228,6 +243,14 @@ async def process_documents_async(
             # Print raw response to terminal for debugging
             logger.info("\n=== Raw AI Response ===")
             logger.info(response_text)
+            
+            # Send progress update
+            await send_chat_message(space_name, {
+                "text": f"🔄 **Processing Update**\n\n"
+                       f"✅ Quotation generated\n"
+                       f"⏳ Creating Excel file...\n"
+                       f"🆔 ID: `{processing_id}`"
+            })
             
             # Update status
             processing_status[processing_id] = {"status": "processing", "progress": "Creating Excel file..."}
