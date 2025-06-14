@@ -3693,7 +3693,193 @@ when for process-document endpoint the quotation is working then why not properl
 
 _**Assistant**_
 
+Let me analyze both endpoints to identify why the `/process-documents` endpoint works but the `/chat-webhook` endpoint doesn't:
 
+
+---
+
+<details>
+            <summary>Searched codebase "process-documents endpoint and chat-webhook endpoint implementation" • **25** results</summary>
+        
+| File | Lines |
+|------|-------|
+| `api/main.py` | L571-584 |
+| `app.py` | L114-129 |
+| `api/main.py` | L442-477 |
+| `api/main.py` | L409-442 |
+| `api/main.py` | L516-530 |
+| `api/main.py` | L477-516 |
+| `api/main.py` | L83-118 |
+| `api/main.py` | L144-177 |
+| `api/main.py` | L177-204 |
+| `app.py` | L90-106 |
+| `api/main.py` | L251-272 |
+| `api/main.py` | L359-396 |
+| `api/main.py` | L222-251 |
+| `api/main.py` | L118-139 |
+| `app.py` | L357-377 |
+| `utils.py` | L93-122 |
+| `api/main.py` | L396-409 |
+| `api/main.py` | L204-222 |
+| `README.md` | L1-51 |
+| `api/main.py` | L561-571 |
+| `api/main.py` | L325-359 |
+| `api/main.py` | L1-61 |
+| `app.py` | L377-408 |
+| `app.py` | L1-74 |
+| `api/main.py` | L295-311 |
+
+</details>
+
+---
+
+After analyzing both endpoints, I can see the key differences:
+
+1. The `/process-documents` endpoint uses `extract_json_from_response` directly:
+```python
+quotation_data = extract_json_from_response(response_text)
+```
+
+2. The `/chat-webhook` endpoint tries multiple parsing methods in sequence:
+```python
+try:
+    # First try direct JSON parsing
+    try:
+        json_content = extract_json_content(response_text)
+        quotation_data = json.loads(json_content)
+    except Exception as e:
+        # Then tries json5 parsing
+        try:
+            json_content = extract_json_content(response_text)
+            quotation_data = json5.loads(json_content)
+        except Exception as e:
+            # Then tries aggressive repair
+            # Then tries LLM repair
+            # Finally falls back to create_fallback_structure
+```
+
+Let's modify the `/chat-webhook` endpoint to use the same direct method as `/process-documents`:
+
+
+---
+
+```diff
+              logger.info(response_text)
+              
+-             # Extract and parse the response using the same method as Streamlit
+-             try:
+-                 # First try direct JSON parsing
+-                 try:
+-                     json_content = extract_json_content(response_text)
+-                     quotation_data = json.loads(json_content)
+-                     logger.info("Successfully parsed JSON with standard parser")
+-                 except Exception as e:
+-                     logger.warning(f"Standard JSON parsing failed: {str(e)}")
+-                     # Try json5 parsing
+-                     try:
+-                         json_content = extract_json_content(response_text)
+-                         quotation_data = json5.loads(json_content)
+-                         logger.info("Successfully parsed JSON with json5")
+-                     except Exception as e:
+-                         logger.warning(f"JSON5 parsing failed: {str(e)}")
+-                         # Try aggressive repair
+-                         try:
+-                             repaired_text = aggressive_json_repair(response_text)
+-                             logger.info("Repaired text: " + (repaired_text[:200] + "..." if len(repaired_text) > 200 else repaired_text))
+-                             
+-                             # Try both json and json5
+-                             for parser in [json.loads, json5.loads]:
+-                                 try:
+-                                     quotation_data = parser(repaired_text)
+-                                     logger.info("Successfully parsed JSON with aggressive repair")
+-                                     break
+-                                 except Exception:
+-                                     continue
+-                         except Exception as e:
+-                             logger.warning(f"Aggressive repair failed: {str(e)}")
+-                             # Try LLM repair if available
+-                             try:
+-                                 llm_repaired_text = repair_json_with_llm(response_text, model)
+-                                 if llm_repaired_text:
+-                                     for parser in [json.loads, json5.loads]:
+-                                         try:
+-                                             quotation_data = parser(llm_repaired_text)
+-                                             logger.info("Successfully parsed JSON with LLM repair")
+-                                             break
+-                                         except Exception:
+-                                             continue
+-                             except Exception as e:
+-                                 logger.warning(f"LLM repair failed: {str(e)}")
+-                                 # Last resort: create fallback structure
+-                                 logger.warning("All parsing methods failed, creating fallback structure")
+-                                 quotation_data = create_fallback_structure(response_text)
+-                 
++             # Extract and parse the response using the same method as process-documents
++             try:
++                 quotation_data = extract_json_from_response(response_text)
+                  if not quotation_data:
+                      raise HTTPException(status_code=500, detail="Failed to parse the AI response into a valid quotation format")
+```
+
+---
+
+I've updated the `/chat-webhook` endpoint to use the same JSON extraction method as the `/process-documents` endpoint. Now both endpoints use `extract_json_from_response` directly, which should make them behave consistently.
+
+The key changes are:
+1. Removed the complex multi-step JSON parsing logic
+2. Replaced it with a single call to `extract_json_from_response`
+3. Kept the same error handling and response structure
+
+This should resolve the inconsistency between the two endpoints. Try using the `/chat-webhook` endpoint again - it should now work the same way as `/process-documents`.
+
+---
+
+_**User**_
+
+WARNING:api.main:Standard JSON parsing failed: Unterminated string starting at: line 884 column 44 (char 42616)
+WARNING:api.main:JSON5 parsing failed: <string>:884 Unexpected end of input at column 76
+INFO:api.main:Repaired text: {
+    "company_info": {
+        "name": "Acme AV Solutions", "address": "123 Main Street", "Anytown", "USA", "contact":"John Doe", john.doe@acmeav.com"
+    },
+    "client_info": {
+        "name": "Eve...
+ERROR:api.main:Error parsing AI response: local variable 'quotation_data' referenced before assignment
+Traceback (most recent call last):
+  File "/home/ubuntu/Quotation-Generator/api/main.py", line 345, in handle_message
+    if not quotation_data:
+UnboundLocalError: local variable 'quotation_data' referenced before assignment
+ERROR:api.main:Error generating quotation: 500: Error parsing AI response: local variable 'quotation_data' referenced before assignment
+Traceback (most recent call last):
+  File "/home/ubuntu/Quotation-Generator/api/main.py", line 345, in handle_message
+    if not quotation_data:
+UnboundLocalError: local variable 'quotation_data' referenced before assignment
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/Quotation-Generator/api/main.py", line 387, in handle_message
+    raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
+fastapi.exceptions.HTTPException: 500: Error parsing AI response: local variable 'quotation_data' referenced before assignment
+ERROR:api.main:Error processing message: 500: Error generating quotation: 500: Error parsing AI response: local variable 'quotation_data' referenced before assignment
+Traceback (most recent call last):
+  File "/home/ubuntu/Quotation-Generator/api/main.py", line 345, in handle_message
+    if not quotation_data:
+UnboundLocalError: local variable 'quotation_data' referenced before assignment
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/Quotation-Generator/api/main.py", line 387, in handle_message
+    raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
+fastapi.exceptions.HTTPException: 500: Error parsing AI response: local variable 'quotation_data' referenced before assignment
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/ubuntu/Quotation-Generator/api/main.py", line 396, in handle_message
+    raise HTTPException(status_code=500, detail=f"Error generating quotation: {str(e)}")
+fastapi.exceptions.HTTPException: 500: Error generating quotation: 500: Error parsing AI response: local variable 'quotation_data' referenced before assignment
 
 ---
 

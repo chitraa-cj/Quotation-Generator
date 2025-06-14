@@ -296,6 +296,9 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
             
             # Extract and parse the response using the same method as Streamlit
             try:
+                # Initialize quotation_data with None
+                quotation_data = None
+                
                 # First try direct JSON parsing
                 try:
                     json_content = extract_json_content(response_text)
@@ -342,8 +345,10 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
                                 logger.warning("All parsing methods failed, creating fallback structure")
                                 quotation_data = create_fallback_structure(response_text)
                 
+                # If all parsing attempts failed, use fallback structure
                 if not quotation_data:
-                    raise HTTPException(status_code=500, detail="Failed to parse the AI response into a valid quotation format")
+                    logger.warning("All parsing methods failed, using fallback structure")
+                    quotation_data = create_fallback_structure(response_text)
                 
                 # Create Excel file with proper formatting
                 excel_file_path = create_excel_from_quotation(quotation_data)
