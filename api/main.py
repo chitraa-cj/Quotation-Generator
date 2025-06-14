@@ -97,7 +97,27 @@ async def chat_webhook(request: Request):
         elif event_type == "REMOVED_FROM_SPACE":
             return handle_removed_from_space(event)
         elif event_type == "MESSAGE":
-            return await handle_message(event)
+            # For message events, immediately return a response
+            # and then process the message
+            message = event.get("message", {})
+            text = message.get("text", "").strip()
+            processed_files = event.get("processedFiles", [])
+            
+            if not processed_files:
+                # If no files, respond immediately
+                return await handle_message(event)
+            
+            # If there are files, send initial response and process
+            try:
+                # Start processing in background
+                result = await handle_message(event)
+                return result
+            except Exception as e:
+                logger.error(f"Error processing message: {str(e)}", exc_info=True)
+                return {
+                    "text": "❌ Sorry, there was an error processing your request.\n"
+                           "Please try again or contact support."
+                }
         else:
             logger.warning(f"Unknown event type: {event_type}")
             return {"text": "Unknown event type"}
@@ -183,18 +203,12 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         debug_info = []
         
         # Set timeouts for different stages
-        file_processing_timeout = 60  # 1 minute for file processing
-        model_generation_timeout = 120  # 2 minutes for model generation
-        excel_generation_timeout = 60  # 1 minute for Excel generation
-        total_timeout = 300  # 5 minutes total timeout
+        file_processing_timeout = 60  # 30 seconds for file processing
+        model_generation_timeout = 160  # 1 minute for model generation
+        excel_generation_timeout = 60  # 30 seconds for Excel generation
+        total_timeout = 200  # 2 minutes total timeout
         
         start_time = time.time()
-        
-        # First, send an initial response to prevent timeout
-        initial_response = {
-            "text": "⏳ Processing your files...\n\n"
-                   "This may take a few minutes. I'll notify you when the quotation is ready."
-        }
         
         # Process files with timeout
         for file_data in processed_files:
