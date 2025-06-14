@@ -247,47 +247,74 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         combined_text = "\n".join(extracted_texts)
         logger.info(f"Combined text length: {len(combined_text)} characters")
         
-        # Initialize model and extractor
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        extractor = RobustJSONExtractor(model)
+        # Initialize model and generate quotation
+        model = initialize_model()
+        if not model:
+            raise HTTPException(status_code=500, detail="Failed to initialize AI model")
         
-        # Extract JSON using RobustJSONExtractor
-        extraction_result = extractor.extract(combined_text)
-        quotation_data = extraction_result.data
-        
-        # Create Excel file
-        excel_file_path = create_excel_from_quotation(quotation_data)
-        
-        # Store file temporarily with unique ID
-        file_id = str(uuid.uuid4())
-        temp_files[file_id] = excel_file_path
-        
-        # Create download URL
-        download_url = f"http://51.21.187.10:8000/download/{file_id}"
-        
-        return {
-            "text": f"✅ **Quotation Generated Successfully!**\n\n"
-                   f"📁 **Processed files:** {', '.join(processed_file_names)}\n"
-                   f"📊 **Download your Excel quotation:** [Click here]({download_url})\n\n"
-                   f"⏰ Download link expires in 1 hour.\n\n"
-                   f"**Processing Details:**\n{debug_message}",
-            "cards": [{
-                "sections": [{
-                    "widgets": [{
-                        "buttons": [{
-                            "textButton": {
-                                "text": "📥 DOWNLOAD QUOTATION",
-                                "onClick": {
-                                    "openLink": {
-                                        "url": download_url
+        # Generate quotation with retry logic
+        try:
+            # Generate prompt and get response
+            prompt = generate_quotation_prompt([], combined_text)  # Empty examples list for now
+            response_text = generate_quotation_with_retry(model, prompt)
+            
+            if not response_text:
+                raise HTTPException(status_code=500, detail="Empty response from AI model")
+            
+            # Print raw response to terminal for debugging
+            logger.info("\n=== Raw AI Response ===")
+            logger.info(response_text)
+            
+            # Extract and parse the response
+            try:
+                quotation_data = extract_json_from_response(response_text)
+                if not quotation_data:
+                    raise HTTPException(status_code=500, detail="Failed to parse the AI response into a valid quotation format")
+                
+                # Create Excel file with proper formatting
+                excel_file_path = create_excel_from_quotation(quotation_data)
+                
+                if not os.path.exists(excel_file_path):
+                    raise HTTPException(status_code=500, detail="Failed to create Excel file")
+                
+                # Store file temporarily with unique ID
+                file_id = str(uuid.uuid4())
+                temp_files[file_id] = excel_file_path
+                
+                # Create download URL
+                download_url = f"http://51.21.187.10:8000/download/{file_id}"
+                
+                return {
+                    "text": f"✅ **Quotation Generated Successfully!**\n\n"
+                           f"📁 **Processed files:** {', '.join(processed_file_names)}\n"
+                           f"📊 **Download your Excel quotation:** [Click here]({download_url})\n\n"
+                           f"⏰ Download link expires in 1 hour.\n\n"
+                           f"**Processing Details:**\n{debug_message}",
+                    "cards": [{
+                        "sections": [{
+                            "widgets": [{
+                                "buttons": [{
+                                    "textButton": {
+                                        "text": "📥 DOWNLOAD QUOTATION",
+                                        "onClick": {
+                                            "openLink": {
+                                                "url": download_url
+                                            }
+                                        }
                                     }
-                                }
-                            }
+                                }]
+                            }]
                         }]
                     }]
-                }]
-            }]
-        }
+                }
+                
+            except Exception as e:
+                logger.error(f"Error parsing AI response: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
+            
+        except Exception as e:
+            logger.error(f"Error generating quotation: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error generating quotation: {str(e)}")
         
     except Exception as e:
         logger.error(f"Error processing message: {str(e)}", exc_info=True)
