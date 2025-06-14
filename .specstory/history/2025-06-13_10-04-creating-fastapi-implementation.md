@@ -3592,3 +3592,84 @@ I've added all the necessary imports from `components.extract_json`. This should
 
 ---
 
+_**User**_
+
+         Process SpawnProcess-1:
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/lib/python3.10/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/ubuntu/Quotation-Generator/venv/lib/python3.10/site-packages/uvicorn/_subprocess.py", line 80, in subprocess_started
+    target(sockets=sockets)
+  File "/home/ubuntu/Quotation-Generator/venv/lib/python3.10/site-packages/uvicorn/server.py", line 66, in run
+    return asyncio.run(self.serve(sockets=sockets))
+  File "/usr/lib/python3.10/asyncio/runners.py", line 44, in run
+    return loop.run_until_complete(main)
+  File "uvloop/loop.pyx", line 1518, in uvloop.loop.Loop.run_until_complete
+  File "/home/ubuntu/Quotation-Generator/venv/lib/python3.10/site-packages/uvicorn/server.py", line 70, in serve
+    await self._serve(sockets)
+  File "/home/ubuntu/Quotation-Generator/venv/lib/python3.10/site-packages/uvicorn/server.py", line 77, in _serve
+    config.load()
+  File "/home/ubuntu/Quotation-Generator/venv/lib/python3.10/site-packages/uvicorn/config.py", line 435, in load
+    self.loaded_app = import_from_string(self.app)
+  File "/home/ubuntu/Quotation-Generator/venv/lib/python3.10/site-packages/uvicorn/importer.py", line 19, in import_from_string
+    module = importlib.import_module(module_str)
+  File "/usr/lib/python3.10/importlib/__init__.py", line 126, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "<frozen importlib._bootstrap>", line 1050, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1027, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1006, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 688, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 883, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "/home/ubuntu/Quotation-Generator/api/main.py", line 25, in <module>
+    from utils import extract_text_from_file
+  File "/home/ubuntu/Quotation-Generator/utils.py", line 34
+    with open(file_path, 'rb') as file:
+    ^^^^
+IndentationError: expected an indented block after 'try' statement on line 33
+
+---
+
+_**Assistant**_
+
+This is an indentation error in the `utils.py` file. Let me fix that:
+
+
+---
+
+Read file: utils.py
+
+---
+
+
+
+---
+
+Let me try again with a more specific edit:
+
+
+---
+
+
+
+---
+
+I apologize for the difficulty with the edit. Let me try one more time with a different approach:
+
+
+---
+
+
+
+---
+
+I apologize for the difficulty with the automatic edits. Since the automatic edits aren't working, here's what you need to do manually:
+
+1. Open `utils.py`
+2. Find the `extract_text_from_pdf` function
+3. Fi
+
+---
+

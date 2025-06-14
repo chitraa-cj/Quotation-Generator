@@ -31,14 +31,14 @@ def extract_text_from_pdf(file_path):
     """Extract text from PDF file with improved cleaning"""
     text = ""
     try:
-    with open(file_path, 'rb') as file:
-        pdf_reader = PyPDF2.PdfReader(file)
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
             
             # Check if PDF is encrypted
             if pdf_reader.is_encrypted:
                 return "Error: PDF is encrypted/password protected"
             
-        for page in pdf_reader.pages:
+            for page in pdf_reader.pages:
                 page_text = page.extract_text()
                 if page_text:
                     # Clean up the text
@@ -87,7 +87,7 @@ def extract_text_from_pdf(file_path):
             text = re.sub(r'\s+', ' ', text)  # Normalize whitespace again
             text = text.strip()
             
-    return text
+            return text
     except Exception as e:
         logger.error(f"Error extracting text from PDF: {str(e)}")
         return f"Error extracting text from PDF: {str(e)}"
