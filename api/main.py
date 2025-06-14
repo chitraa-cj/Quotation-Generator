@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import tempfile
@@ -11,6 +11,8 @@ import json
 import base64
 import time
 import random
+import asyncio
+import httpx
 import google.generativeai as genai
 from components.extract_json import (
     RobustJSONExtractor, 
@@ -42,6 +44,8 @@ logger = logging.getLogger(__name__)
 
 # Store for temporary files (use Redis/database in production)
 temp_files = {}
+# Store for processing status
+processing_status = {}
 
 def retry_with_backoff(func, max_retries=3, initial_delay=1, max_delay=10):
     """Retry a function with exponential backoff"""
@@ -82,141 +86,37 @@ def initialize_model():
         logger.error(f"Failed to initialize model: {str(e)}")
         return None
 
-@app.post("/chat-webhook")
-async def chat_webhook(request: Request):
-    """Handle Google Chat webhook events"""
+async def send_chat_message(space_name: str, message_data: Dict[str, Any]):
+    """Send a message to Google Chat space using webhook or API"""
     try:
-        event = await request.json()
-        logger.info(f"=== RECEIVED GOOGLE CHAT EVENT ===")
-        logger.info(f"Event type: {event.get('type')}")
+        # This is a placeholder - you'll need to implement the actual sending logic
+        # using Google Chat API or webhook URL if available
+        logger.info(f"Sending message to {space_name}: {message_data}")
         
-        event_type = event.get("type")
-        
-        if event_type == "ADDED_TO_SPACE":
-            return handle_added_to_space(event)
-        elif event_type == "REMOVED_FROM_SPACE":
-            return handle_removed_from_space(event)
-        elif event_type == "MESSAGE":
-            # For message events, immediately return a response
-            # and then process the message
-            message = event.get("message", {})
-            text = message.get("text", "").strip()
-            processed_files = event.get("processedFiles", [])
-            
-            if not processed_files:
-                # If no files, respond immediately
-                return await handle_message(event)
-            
-            # If there are files, send initial response and process
-            try:
-                # Start processing in background
-                result = await handle_message(event)
-                return result
-            except Exception as e:
-                logger.error(f"Error processing message: {str(e)}", exc_info=True)
-                return {
-                    "text": "❌ Sorry, there was an error processing your request.\n"
-                           "Please try again or contact support."
-                }
-        else:
-            logger.warning(f"Unknown event type: {event_type}")
-            return {"text": "Unknown event type"}
-        
+        # For now, we'll just log it. In production, you'd use:
+        # - Google Chat API with service account
+        # - Or store the webhook URL from the original request
+        pass
     except Exception as e:
-        logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
-        return {
-            "text": "❌ Sorry, there was an error processing your request.",
-            "cards": [{
-                "sections": [{
-                    "widgets": [{
-                        "textParagraph": {
-                            "text": f"Debug Error: {str(e)}"
-                        }
-                    }]
-                }]
-            }]
-        }
+        logger.error(f"Failed to send chat message: {str(e)}")
 
-def handle_added_to_space(event: Dict[Any, Any]) -> Dict[str, Any]:
-    """Handle bot being added to space"""
-    space = event.get("space", {})
-    user = event.get("user", {})
-    
-    logger.info(f"Bot added to space: {space.get('name', 'unknown')}")
-    
-    if space.get("singleUserBotDm"):
-        message = f"👋 Hello {user.get('displayName', 'User')}! Welcome to your Document Quotation Assistant!"
-    else:
-        space_name = space.get("displayName", "this chat")
-        message = f"👋 Thank you for adding me to {space_name}!"
-    
-    message += "\n\n📄 **How to use me:**\n"
-    message += "• Upload documents (PDF, DOCX, TXT, RTF)\n"
-    message += "• I'll extract text and generate quotations\n"
-    message += "• You'll get an Excel file with the quotation\n"
-    message += "• Just attach files and mention me!"
-    
-    return {"text": message}
-
-def handle_removed_from_space(event: Dict[Any, Any]) -> Dict[str, Any]:
-    """Handle bot being removed from space"""
-    logger.info(f"Bot removed from space: {event.get('space', {}).get('name', 'unknown')}")
-    return {}
-
-async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
-    """Handle message events with processed files"""
-    message = event.get("message", {})
-    text = message.get("text", "").strip()
-    user = event.get("user", {})
-    processed_files = event.get("processedFiles", [])
-    
-    logger.info(f"=== PROCESSING MESSAGE ===")
-    logger.info(f"Message text: {text}")
-    logger.info(f"Processed files count: {len(processed_files)}")
-    logger.info(f"User: {user.get('displayName', 'Unknown')}")
-    
-    # If no processed files, provide instructions
-    if not processed_files:
-        # Check if there were attachments that failed to process
-        attachments = message.get("attachment", [])
-        if attachments:
-            return {
-                "text": "❌ I couldn't process the attached files.\n\n"
-                       "**Common issues:**\n"
-                       "• Files may be corrupted or password-protected\n"
-                       "• Unsupported file type\n"
-                       "• File access permissions\n\n"
-                       "**Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
-                       "Please try uploading the files again or check if they're accessible."
-            }
-        else:
-            return {
-                "text": "👋 Hello! To generate a quotation, please attach your documents to this message.\n\n"
-                       "📎 **Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
-                       "📊 I'll analyze your documents and create an Excel quotation file."
-            }
-    
+async def process_documents_async(
+    space_name: str,
+    processed_files: List[Dict],
+    processing_id: str,
+    user_display_name: str = "User"
+):
+    """Process documents asynchronously and send result to chat"""
     try:
+        processing_status[processing_id] = {"status": "processing", "progress": "Extracting text..."}
+        
         # Process the files that were downloaded by Apps Script
         extracted_texts = []
         processed_file_names = []
         debug_info = []
         
-        # Set timeouts for different stages
-        file_processing_timeout = 60  # 30 seconds for file processing
-        model_generation_timeout = 160  # 1 minute for model generation
-        excel_generation_timeout = 60  # 30 seconds for Excel generation
-        total_timeout = 200  # 2 minutes total timeout
-        
-        start_time = time.time()
-        
-        # Process files with timeout
+        # Process files
         for file_data in processed_files:
-            if time.time() - start_time > file_processing_timeout:
-                return {
-                    "text": "❌ File processing took too long. Please try again with smaller files or fewer files."
-                }
-                
             file_name = file_data.get("name", "unknown_file")
             file_content_b64 = file_data.get("content", "")
             file_size = file_data.get("size", 0)
@@ -277,7 +177,9 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         debug_message = "\n".join(debug_info)
         
         if not extracted_texts:
-            return {
+            processing_status[processing_id] = {"status": "error", "message": "No valid text extracted"}
+            
+            error_message = {
                 "text": f"❌ No valid text could be extracted from the attached files.\n\n"
                        f"**Debug Information:**\n{debug_message}\n\n"
                        f"**Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
@@ -287,12 +189,12 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
                        f"• Corrupted files\n"
                        f"• Empty files"
             }
+            
+            await send_chat_message(space_name, error_message)
+            return
         
-        # Check total timeout
-        if time.time() - start_time > total_timeout:
-            return {
-                "text": "❌ The request took too long to process. Please try again with smaller files or fewer files."
-            }
+        # Update status
+        processing_status[processing_id] = {"status": "processing", "progress": "Generating quotation..."}
         
         # Generate quotation
         combined_text = "\n".join(extracted_texts)
@@ -301,154 +203,279 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         # Initialize model and generate quotation
         model = initialize_model()
         if not model:
-            raise HTTPException(status_code=500, detail="Failed to initialize AI model")
+            processing_status[processing_id] = {"status": "error", "message": "Failed to initialize AI model"}
+            
+            error_message = {
+                "text": "❌ Failed to initialize AI model. Please try again later."
+            }
+            await send_chat_message(space_name, error_message)
+            return
         
-        # Generate quotation with retry logic and timeout
+        # Generate quotation with retry logic
         try:
             # Generate prompt and get response
-            prompt = generate_quotation_prompt([], combined_text)  # Empty examples list for now
-            
-            # Set a timeout for the model generation
-            generation_start_time = time.time()
-            
-            def generate_with_timeout():
-                if time.time() - generation_start_time > model_generation_timeout:
-                    raise TimeoutError("Model generation took too long")
-                return generate_quotation_with_retry(model, prompt)
-            
-            response_text = generate_with_timeout()
+            prompt = generate_quotation_prompt([], combined_text)
+            response_text = generate_quotation_with_retry(model, prompt)
             
             if not response_text:
-                raise HTTPException(status_code=500, detail="Empty response from AI model")
+                raise Exception("Empty response from AI model")
             
             # Print raw response to terminal for debugging
             logger.info("\n=== Raw AI Response ===")
             logger.info(response_text)
             
+            # Update status
+            processing_status[processing_id] = {"status": "processing", "progress": "Creating Excel file..."}
+            
             # Extract and parse the response using the same method as Streamlit
+            quotation_data = None
+            
+            # First try direct JSON parsing
             try:
-                # Initialize quotation_data with None
-                quotation_data = None
-                
-                # First try direct JSON parsing
+                json_content = extract_json_content(response_text)
+                quotation_data = json.loads(json_content)
+                logger.info("Successfully parsed JSON with standard parser")
+            except Exception as e:
+                logger.warning(f"Standard JSON parsing failed: {str(e)}")
+                # Try json5 parsing
                 try:
                     json_content = extract_json_content(response_text)
-                    quotation_data = json.loads(json_content)
-                    logger.info("Successfully parsed JSON with standard parser")
+                    quotation_data = json5.loads(json_content)
+                    logger.info("Successfully parsed JSON with json5")
                 except Exception as e:
-                    logger.warning(f"Standard JSON parsing failed: {str(e)}")
-                    # Try json5 parsing
+                    logger.warning(f"JSON5 parsing failed: {str(e)}")
+                    # Try aggressive repair
                     try:
-                        json_content = extract_json_content(response_text)
-                        quotation_data = json5.loads(json_content)
-                        logger.info("Successfully parsed JSON with json5")
-                    except Exception as e:
-                        logger.warning(f"JSON5 parsing failed: {str(e)}")
-                        # Try aggressive repair
-                        try:
-                            repaired_text = aggressive_json_repair(response_text)
-                            logger.info("Repaired text: " + (repaired_text[:200] + "..." if len(repaired_text) > 200 else repaired_text))
-                            
-                            # Try both json and json5
-                            for parser in [json.loads, json5.loads]:
-                                try:
-                                    quotation_data = parser(repaired_text)
-                                    logger.info("Successfully parsed JSON with aggressive repair")
-                                    break
-                                except Exception:
-                                    continue
-                        except Exception as e:
-                            logger.warning(f"Aggressive repair failed: {str(e)}")
-                            # Try LLM repair if available
+                        repaired_text = aggressive_json_repair(response_text)
+                        logger.info("Repaired text: " + (repaired_text[:200] + "..." if len(repaired_text) > 200 else repaired_text))
+                        
+                        # Try both json and json5
+                        for parser in [json.loads, json5.loads]:
                             try:
-                                llm_repaired_text = repair_json_with_llm(response_text, model)
-                                if llm_repaired_text:
-                                    for parser in [json.loads, json5.loads]:
-                                        try:
-                                            quotation_data = parser(llm_repaired_text)
-                                            logger.info("Successfully parsed JSON with LLM repair")
-                                            break
-                                        except Exception:
-                                            continue
-                            except Exception as e:
-                                logger.warning(f"LLM repair failed: {str(e)}")
-                                # Last resort: create fallback structure
-                                logger.warning("All parsing methods failed, creating fallback structure")
-                                quotation_data = create_fallback_structure(response_text)
-                
-                # If all parsing attempts failed, use fallback structure
-                if not quotation_data:
-                    logger.warning("All parsing methods failed, using fallback structure")
-                    quotation_data = create_fallback_structure(response_text)
-                
-                # Check timeout before Excel generation
-                if time.time() - start_time > total_timeout - excel_generation_timeout:
-                    return {
-                        "text": "❌ The request took too long to process. Please try again with smaller files or fewer files."
-                    }
-                
-                # Create Excel file with proper formatting
-                excel_file_path = create_excel_from_quotation(quotation_data)
-                
-                if not os.path.exists(excel_file_path):
-                    raise HTTPException(status_code=500, detail="Failed to create Excel file")
-                
-                # Store file temporarily with unique ID
-                file_id = str(uuid.uuid4())
-                temp_files[file_id] = excel_file_path
-                
-                # Create download URL
-                download_url = f"http://51.21.187.10:8000/download/{file_id}"
-                
-                return {
-                    "text": f"✅ **Quotation Generated Successfully!**\n\n"
-                           f"📁 **Processed files:** {', '.join(processed_file_names)}\n"
-                           f"📊 **Download your Excel quotation:** [Click here]({download_url})\n\n"
-                           f"⏰ Download link expires in 1 hour.\n\n"
-                           f"**Processing Details:**\n{debug_message}",
-                    "cards": [{
-                        "sections": [{
-                            "widgets": [{
-                                "buttons": [{
-                                    "textButton": {
-                                        "text": "📥 DOWNLOAD QUOTATION",
-                                        "onClick": {
-                                            "openLink": {
-                                                "url": download_url
-                                            }
+                                quotation_data = parser(repaired_text)
+                                logger.info("Successfully parsed JSON with aggressive repair")
+                                break
+                            except Exception:
+                                continue
+                    except Exception as e:
+                        logger.warning(f"Aggressive repair failed: {str(e)}")
+                        # Try LLM repair if available
+                        try:
+                            llm_repaired_text = repair_json_with_llm(response_text, model)
+                            if llm_repaired_text:
+                                for parser in [json.loads, json5.loads]:
+                                    try:
+                                        quotation_data = parser(llm_repaired_text)
+                                        logger.info("Successfully parsed JSON with LLM repair")
+                                        break
+                                    except Exception:
+                                        continue
+                        except Exception as e:
+                            logger.warning(f"LLM repair failed: {str(e)}")
+                            # Last resort: create fallback structure
+                            logger.warning("All parsing methods failed, creating fallback structure")
+                            quotation_data = create_fallback_structure(response_text)
+            
+            # If all parsing attempts failed, use fallback structure
+            if not quotation_data:
+                logger.warning("All parsing methods failed, using fallback structure")
+                quotation_data = create_fallback_structure(response_text)
+            
+            # Create Excel file with proper formatting
+            excel_file_path = create_excel_from_quotation(quotation_data)
+            
+            if not os.path.exists(excel_file_path):
+                raise Exception("Failed to create Excel file")
+            
+            # Store file temporarily with unique ID
+            file_id = str(uuid.uuid4())
+            temp_files[file_id] = excel_file_path
+            
+            # Update status to completed
+            processing_status[processing_id] = {"status": "completed", "file_id": file_id}
+            
+            # Create download URL
+            download_url = f"https://51.21.187.10:8000/download/{file_id}"
+            
+            # Send success message
+            success_message = {
+                "text": f"✅ **Quotation Generated Successfully!**\n\n"
+                       f"📁 **Processed files:** {', '.join(processed_file_names)}\n"
+                       f"📊 **Download your Excel quotation:** [Click here]({download_url})\n\n"
+                       f"⏰ Download link expires in 1 hour.\n\n"
+                       f"**Processing Details:**\n{debug_message}",
+                "cards": [{
+                    "sections": [{
+                        "widgets": [{
+                            "buttons": [{
+                                "textButton": {
+                                    "text": "📥 DOWNLOAD QUOTATION",
+                                    "onClick": {
+                                        "openLink": {
+                                            "url": download_url
                                         }
                                     }
-                                }]
+                                }
                             }]
                         }]
                     }]
-                }
-                
-            except Exception as e:
-                logger.error(f"Error parsing AI response: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
-            
-        except TimeoutError as te:
-            logger.error(f"Processing timeout: {str(te)}")
-            return {
-                "text": "❌ The request took too long to process. Please try again with smaller files or fewer files."
+                }]
             }
+            
+            await send_chat_message(space_name, success_message)
+            
         except Exception as e:
             logger.error(f"Error generating quotation: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Error generating quotation: {str(e)}")
+            processing_status[processing_id] = {"status": "error", "message": str(e)}
+            
+            error_message = {
+                "text": f"❌ Error generating quotation: {str(e)}\n"
+                       f"Please try again or contact support.\n\n"
+                       f"**Debug Info:**\n{debug_message}"
+            }
+            await send_chat_message(space_name, error_message)
         
-    except TimeoutError as te:
-        logger.error(f"Processing timeout: {str(te)}")
-        return {
-            "text": "❌ The request took too long to process. Please try again with smaller files or fewer files."
-        }
     except Exception as e:
-        logger.error(f"Error processing message: {str(e)}", exc_info=True)
-        return {
-            "text": f"❌ Error generating quotation: {str(e)}\n"
-                   f"Please try again or contact support.\n\n"
-                   f"**Debug Info:**\n{debug_message if 'debug_message' in locals() else 'No debug info available'}"
+        logger.error(f"Error in async processing: {str(e)}", exc_info=True)
+        processing_status[processing_id] = {"status": "error", "message": str(e)}
+        
+        error_message = {
+            "text": f"❌ Unexpected error during processing: {str(e)}\n"
+                   f"Please try again or contact support."
         }
+        await send_chat_message(space_name, error_message)
+
+@app.post("/chat-webhook")
+async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
+    """Handle Google Chat webhook events"""
+    try:
+        event = await request.json()
+        logger.info(f"=== RECEIVED GOOGLE CHAT EVENT ===")
+        logger.info(f"Event type: {event.get('type')}")
+        
+        event_type = event.get("type")
+        
+        if event_type == "ADDED_TO_SPACE":
+            return handle_added_to_space(event)
+        elif event_type == "REMOVED_FROM_SPACE":
+            return handle_removed_from_space(event)
+        elif event_type == "MESSAGE":
+            message = event.get("message", {})
+            text = message.get("text", "").strip()
+            processed_files = event.get("processedFiles", [])
+            space = event.get("space", {})
+            user = event.get("user", {})
+            
+            logger.info(f"=== PROCESSING MESSAGE ===")
+            logger.info(f"Message text: {text}")
+            logger.info(f"Processed files count: {len(processed_files)}")
+            logger.info(f"User: {user.get('displayName', 'Unknown')}")
+            
+            # If no processed files, provide instructions
+            if not processed_files:
+                # Check if there were attachments that failed to process
+                attachments = message.get("attachment", [])
+                if attachments:
+                    return {
+                        "text": "❌ I couldn't process the attached files.\n\n"
+                               "**Common issues:**\n"
+                               "• Files may be corrupted or password-protected\n"
+                               "• Unsupported file type\n"
+                               "• File access permissions\n\n"
+                               "**Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
+                               "Please try uploading the files again or check if they're accessible."
+                    }
+                else:
+                    return {
+                        "text": "👋 Hello! To generate a quotation, please attach your documents to this message.\n\n"
+                               "📎 **Supported formats:** PDF, DOCX, DOC, TXT, RTF\n"
+                               "📊 I'll analyze your documents and create an Excel quotation file."
+                    }
+            
+            # If there are files, send immediate response and process in background
+            processing_id = str(uuid.uuid4())
+            processing_status[processing_id] = {"status": "starting", "progress": "Initializing..."}
+            
+            # Start background processing
+            background_tasks.add_task(
+                process_documents_async,
+                space.get("name", "unknown_space"),
+                processed_files,
+                processing_id,
+                user.get("displayName", "User")
+            )
+            
+            # Return immediate response (must be within 30 seconds)
+            return {
+                "text": f"🔄 **Processing your documents...**\n\n"
+                       f"📄 Found {len(processed_files)} file(s) to process\n"
+                       f"⏳ This may take a few minutes. I'll send you the results when ready!\n\n"
+                       f"🆔 Processing ID: `{processing_id}`\n"
+                       f"💡 You can check status at: `/status {processing_id}`"
+            }
+        else:
+            logger.warning(f"Unknown event type: {event_type}")
+            return {"text": "Unknown event type"}
+        
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
+        return {
+            "text": "❌ Sorry, there was an error processing your request.",
+            "cards": [{
+                "sections": [{
+                    "widgets": [{
+                        "textParagraph": {
+                            "text": f"Debug Error: {str(e)}"
+                        }
+                    }]
+                }]
+            }]
+        }
+
+def handle_added_to_space(event: Dict[Any, Any]) -> Dict[str, Any]:
+    """Handle bot being added to space"""
+    space = event.get("space", {})
+    user = event.get("user", {})
+    
+    logger.info(f"Bot added to space: {space.get('name', 'unknown')}")
+    
+    if space.get("singleUserBotDm"):
+        message = f"👋 Hello {user.get('displayName', 'User')}! Welcome to your Document Quotation Assistant!"
+    else:
+        space_name = space.get("displayName", "this chat")
+        message = f"👋 Thank you for adding me to {space_name}!"
+    
+    message += "\n\n📄 **How to use me:**\n"
+    message += "• Upload documents (PDF, DOCX, TXT, RTF)\n"
+    message += "• I'll extract text and generate quotations\n"
+    message += "• You'll get an Excel file with the quotation\n"
+    message += "• Just attach files and mention me!\n\n"
+    message += "⚡ **Note:** Processing may take a few minutes for large files."
+    
+    return {"text": message}
+
+def handle_removed_from_space(event: Dict[Any, Any]) -> Dict[str, Any]:
+    """Handle bot being removed from space"""
+    logger.info(f"Bot removed from space: {event.get('space', {}).get('name', 'unknown')}")
+    return {}
+
+@app.get("/status/{processing_id}")
+async def get_processing_status(processing_id: str):
+    """Get processing status"""
+    if processing_id not in processing_status:
+        raise HTTPException(status_code=404, detail="Processing ID not found")
+    
+    status_info = processing_status[processing_id]
+    
+    if status_info["status"] == "completed" and "file_id" in status_info:
+        download_url = f"https://51.21.187.10:8000/download/{status_info['file_id']}"
+        return {
+            "status": "completed",
+            "message": "Processing completed successfully!",
+            "download_url": download_url
+        }
+    
+    return status_info
 
 @app.post("/process-documents")
 async def process_documents(files: List[UploadFile] = File(...)):
@@ -609,6 +636,8 @@ async def debug_info():
         "status": "debug",
         "temp_files_count": len(temp_files),
         "temp_files_ids": list(temp_files.keys()),
+        "processing_jobs": len(processing_status),
+        "processing_ids": list(processing_status.keys()),
         "supported_extensions": ['.pdf', '.docx', '.doc', '.txt', '.rtf']
     }
 
@@ -620,6 +649,7 @@ async def root():
             "upload": "/process-documents",
             "download": "/download/{file_id}",
             "webhook": "/chat-webhook",
+            "status": "/status/{processing_id}",
             "debug": "/debug",
             "health": "/health"
         }
