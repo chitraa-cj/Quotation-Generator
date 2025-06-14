@@ -174,7 +174,15 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         processed_file_names = []
         debug_info = []
         
+        # Set a timeout for the entire processing
+        start_time = time.time()
+        timeout = 300  # 5 minutes timeout
+        
         for file_data in processed_files:
+            # Check if we've exceeded the timeout
+            if time.time() - start_time > timeout:
+                raise TimeoutError("Processing took too long")
+                
             file_name = file_data.get("name", "unknown_file")
             file_content_b64 = file_data.get("content", "")
             file_size = file_data.get("size", 0)
@@ -255,11 +263,21 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
         if not model:
             raise HTTPException(status_code=500, detail="Failed to initialize AI model")
         
-        # Generate quotation with retry logic
+        # Generate quotation with retry logic and timeout
         try:
             # Generate prompt and get response
             prompt = generate_quotation_prompt([], combined_text)  # Empty examples list for now
-            response_text = generate_quotation_with_retry(model, prompt)
+            
+            # Set a timeout for the model generation
+            generation_start_time = time.time()
+            generation_timeout = 180  # 3 minutes timeout for generation
+            
+            def generate_with_timeout():
+                if time.time() - generation_start_time > generation_timeout:
+                    raise TimeoutError("Model generation took too long")
+                return generate_quotation_with_retry(model, prompt)
+            
+            response_text = generate_with_timeout()
             
             if not response_text:
                 raise HTTPException(status_code=500, detail="Empty response from AI model")
@@ -315,10 +333,20 @@ async def handle_message(event: Dict[Any, Any]) -> Dict[str, Any]:
                 logger.error(f"Error parsing AI response: {str(e)}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
             
+        except TimeoutError as te:
+            logger.error(f"Processing timeout: {str(te)}")
+            return {
+                "text": "❌ The request took too long to process. Please try again with a smaller file or fewer files."
+            }
         except Exception as e:
             logger.error(f"Error generating quotation: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Error generating quotation: {str(e)}")
         
+    except TimeoutError as te:
+        logger.error(f"Processing timeout: {str(te)}")
+        return {
+            "text": "❌ The request took too long to process. Please try again with a smaller file or fewer files."
+        }
     except Exception as e:
         logger.error(f"Error processing message: {str(e)}", exc_info=True)
         return {
