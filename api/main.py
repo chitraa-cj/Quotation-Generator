@@ -155,30 +155,30 @@ async def send_chat_message_with_retry(space_name: str, message_data: Dict[str, 
 async def process_documents_async(
     space_name: str,
     processed_files: List[Dict],
-    processing_id: str,
+    file_id: str,
     user_display_name: str = "User"
 ):
     """Process documents asynchronously and send result to chat"""
     start_time = time.time()
     
     try:
-        logger.info(f"Starting async processing for {processing_id}")
+        logger.info(f"Starting async processing for {file_id}")
         
         # Send initial detailed status
         await send_chat_message_with_retry(space_name, {
             "text": f"🔄 **Processing Started**\n\n"
                    f"📊 **Files:** {len(processed_files)} document(s)\n"
                    f"⏱️ **Started:** {datetime.now().strftime('%H:%M:%S')}\n"
-                   f"🆔 **ID:** `{processing_id}`\n\n"
+                   f"📥 **Download:** [Click here]({processing_status[file_id]['download_url']})\n\n"
                    f"**Status:** Extracting text from files..."
         })
         
-        processing_status[processing_id] = {
+        processing_status[file_id].update({
             "status": "processing", 
             "progress": "Extracting text...",
             "created_at": start_time,
             "current_step": "text_extraction"
-        }
+        })
         
         # Process files with progress tracking
         extracted_texts = []
@@ -247,7 +247,7 @@ async def process_documents_async(
         
         # Check if we have any extracted text
         if not extracted_texts:
-            processing_status[processing_id] = {
+            processing_status[file_id] = {
                 "status": "error", 
                 "message": "No valid text extracted",
                 "created_at": start_time,
@@ -265,7 +265,7 @@ async def process_documents_async(
                        f"• Password-protected files\n"
                        f"• Corrupted/empty files\n"
                        f"• Image-only documents\n\n"
-                       f"🆔 ID: `{processing_id}`"
+                       f"🆔 ID: `{file_id}`"
             }
             
             await send_chat_message_with_retry(space_name, error_message)
@@ -279,11 +279,11 @@ async def process_documents_async(
                    f"📄 Processed: {len(processed_file_names)} file(s)\n"
                    f"📝 Total text: {combined_length:,} characters\n"
                    f"🤖 Generating AI quotation...\n\n"
-                   f"🆔 ID: `{processing_id}`"
+                   f"🆔 ID: `{file_id}`"
         })
         
         # Update status
-        processing_status[processing_id].update({
+        processing_status[file_id].update({
             "status": "processing", 
             "progress": "Generating quotation...",
             "current_step": "ai_generation",
@@ -298,7 +298,7 @@ async def process_documents_async(
         # Initialize model
         model = initialize_model()
         if not model:
-            processing_status[processing_id] = {
+            processing_status[file_id] = {
                 "status": "error", 
                 "message": "Failed to initialize AI model",
                 "created_at": start_time,
@@ -309,7 +309,7 @@ async def process_documents_async(
                 "text": f"❌ **AI Model Error**\n\n"
                        f"Failed to initialize the AI model.\n"
                        f"Please try again in a few minutes.\n\n"
-                       f"🆔 ID: `{processing_id}`"
+                       f"🆔 ID: `{file_id}`"
             })
             return
         
@@ -339,11 +339,11 @@ async def process_documents_async(
                 "text": f"🔄 **Almost Done!**\n\n"
                        f"✅ AI quotation generated\n"
                        f"📊 Creating Excel spreadsheet...\n\n"
-                       f"🆔 ID: `{processing_id}`"
+                       f"🆔 ID: `{file_id}`"
             })
             
             # Update status
-            processing_status[processing_id].update({
+            processing_status[file_id].update({
                 "status": "processing", 
                 "progress": "Creating Excel file...",
                 "current_step": "excel_generation"
@@ -406,9 +406,8 @@ async def process_documents_async(
             
             # Update status to completed
             total_duration = time.time() - start_time
-            processing_status[processing_id] = {
+            processing_status[file_id].update({
                 "status": "completed", 
-                "file_id": file_id,
                 "created_at": start_time,
                 "completed_at": time.time(),
                 "total_duration": total_duration,
@@ -417,7 +416,7 @@ async def process_documents_async(
                 "parsing_method": parsing_method,
                 "ai_duration": ai_duration,
                 "excel_duration": excel_duration
-            }
+            })
             
             # Create download URL
             download_url = f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
@@ -431,8 +430,7 @@ async def process_documents_async(
                        f"⏱️ **Processing time:** {total_duration:.1f} seconds\n"
                        f"🤖 **AI method:** {parsing_method.replace('_', ' ').title()}\n\n"
                        f"**📥 [Download Excel Quotation]({download_url})**\n\n"
-                       f"⏰ *Download link expires in 1 hour*\n"
-                       f"🆔 ID: `{processing_id}`",
+                       f"⏰ *Download link expires in 1 hour*",
                        
                 "cards": [{
                     "sections": [{
@@ -453,13 +451,13 @@ async def process_documents_async(
             }
             
             await send_chat_message_with_retry(space_name, success_message)
-            logger.info(f"Processing completed successfully for {processing_id} in {total_duration:.1f}s")
+            logger.info(f"Processing completed successfully for {file_id} in {total_duration:.1f}s")
             
         except Exception as e:
             error_duration = time.time() - start_time
             logger.error(f"Error in quotation generation: {str(e)}", exc_info=True)
             
-            processing_status[processing_id] = {
+            processing_status[file_id] = {
                 "status": "error", 
                 "message": str(e),
                 "created_at": start_time,
@@ -472,7 +470,7 @@ async def process_documents_async(
                        f"**Error:** {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}\n"
                        f"**Duration:** {error_duration:.1f} seconds\n\n"
                        f"Please try again or contact support if the issue persists.\n\n"
-                       f"🆔 ID: `{processing_id}`"
+                       f"🆔 ID: `{file_id}`"
             }
             await send_chat_message_with_retry(space_name, error_message)
         
@@ -480,7 +478,7 @@ async def process_documents_async(
         error_duration = time.time() - start_time
         logger.error(f"Critical error in async processing: {str(e)}", exc_info=True)
         
-        processing_status[processing_id] = {
+        processing_status[file_id] = {
             "status": "error", 
             "message": f"Critical processing error: {str(e)}",
             "created_at": start_time,
@@ -494,7 +492,7 @@ async def process_documents_async(
                    f"**Error:** {str(e)[:150]}{'...' if len(str(e)) > 150 else ''}\n"
                    f"**Duration:** {error_duration:.1f} seconds\n\n"
                    f"Please try again or contact support.\n\n"
-                   f"🆔 ID: `{processing_id}`"
+                   f"🆔 ID: `{file_id}`"
         }
         await send_chat_message_with_retry(space_name, error_message)
 
@@ -588,17 +586,19 @@ async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
                 return response
             
             # Generate processing ID and queue background task
-            processing_id = f"{int(time.time())}-{str(uuid.uuid4())[:6]}"
+            file_id = str(uuid.uuid4())
+            download_url = f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
             
             # Initialize processing status immediately
-            processing_status[processing_id] = {
+            processing_status[file_id] = {
                 "status": "queued", 
                 "progress": "Queued for processing...",
                 "created_at": webhook_start_time,
                 "request_id": request_id,
                 "user_name": user_name,
                 "space_name": space_name,
-                "file_count": len(processed_files)
+                "file_count": len(processed_files),
+                "download_url": download_url
             }
             
             # Queue background processing - this happens AFTER response
@@ -606,22 +606,23 @@ async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
                 process_documents_async,
                 space_name,
                 processed_files,
-                processing_id,
+                file_id,
                 user_name
             )
             
-            # Return immediate acknowledgment response
+            # Return immediate acknowledgment response with download link
             response = {
                 "text": f"🚀 **Processing Started!**\n\n"
                        f"📊 **Files received:** {len(processed_files)} document(s)\n"
                        f"⏱️ **Estimated time:** 2-5 minutes\n"
-                       f"🤖 **AI Model:** Gemini 2.0 Flash\n"
-                       f"🆔 **Tracking ID:** `{processing_id}`\n\n"
+                       f"🤖 **AI Model:** Gemini 2.0 Flash\n\n"
                        f"**What happens next:**\n"
                        f"1. ⚡ Text extraction from files\n"
                        f"2. 🤖 AI quotation generation\n"
                        f"3. 📊 Excel spreadsheet creation\n"
                        f"4. 📥 Download link delivery\n\n"
+                       f"**📥 [Download Link]({download_url})**\n"
+                       f"*This link will be active once processing is complete*\n\n"
                        f"*I'll update you with progress messages!*"
             }
             
@@ -690,33 +691,33 @@ def handle_removed_from_space(event: Dict[Any, Any]) -> Dict[str, Any]:
     return {}
 
 # Add this endpoint for manual status checking
-@app.get("/status/{processing_id}")
-async def get_processing_status(processing_id: str):
+@app.get("/status/{file_id}")
+async def get_processing_status(file_id: str):
     """Get processing status"""
-    if processing_id not in processing_status:
-        raise HTTPException(status_code=404, detail="Processing ID not found")
+    if file_id not in processing_status:
+        raise HTTPException(status_code=404, detail="File ID not found")
     
-    status_info = processing_status[processing_id]
+    status_info = processing_status[file_id]
     
-    if status_info["status"] == "completed" and "file_id" in status_info:
-        download_url = f"https://51.21.187.10:8000/download/{status_info['file_id']}"
+    if status_info["status"] == "completed":
         return {
             "status": "completed",
             "message": "Processing completed successfully!",
-            "download_url": download_url,
-            "processing_id": processing_id
+            "download_url": status_info.get("download_url"),
+            "file_id": file_id
         }
     elif status_info["status"] == "error":
         return {
             "status": "error",
             "message": status_info.get("message", "Unknown error occurred"),
-            "processing_id": processing_id
+            "file_id": file_id
         }
     else:
         return {
             "status": status_info["status"],
             "progress": status_info.get("progress", "Processing..."),
-            "processing_id": processing_id,
+            "file_id": file_id,
+            "download_url": status_info.get("download_url"),
             "elapsed_time": f"{time.time() - status_info.get('created_at', time.time()):.1f}s"
         }
 
@@ -958,7 +959,7 @@ async def root():
             "upload": "/process-documents",
             "download": "/download/{file_id}",
             "webhook": "/chat-webhook",
-            "status": "/status/{processing_id}",
+            "status": "/status/{file_id}",
             "debug": "/debug",
             "health": "/health"
         }
