@@ -5566,7 +5566,34 @@ I've made several improvements to fix the file download issues:
    - Verify file existence before and after storage
    - Clean up files if storage fails
 
-The key ch
+The key changes are:
+1. We now verify file storage before updating status
+2. We log the complete file storage status
+3. We clean up files if storage fails
+4. We verify file existence and readability before serving
+
+This should fix the "File not found or expired" error. The download link should now work correctly because:
+1. We verify the file exists before storing it
+2. We verify the file is stored correctly
+3. We don't delete the file after sending it
+4. We have better error handling and logging
+
+Would you like me to make any additional improvements to the file handling logic?
+
+---
+
+_**User**_
+
+still this - {
+  "detail": "File not found or expired"
+} the download link is not working
+
+---
+
+_**Assistant**_
+
+Let me help fix the download link issue. The problem seems to be that the file is not being properly stored in `temp_files` before the download link is generated. Let me modify the code to ensure proper file storage and handling.
+
 
 ---
 

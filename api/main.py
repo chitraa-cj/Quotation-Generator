@@ -52,6 +52,10 @@ processing_status = {}
 GOOGLE_CHAT_TIMEOUT = 30  # seconds - hard limit from Google
 MAX_RESPONSE_TIME = 25    # seconds - our safe limit
 CLEANUP_INTERVAL = 3600   # 1 hour
+TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_files")
+
+# Ensure temp directory exists
+os.makedirs(TEMP_DIR, exist_ok=True)
 
 def cleanup_old_files():
     """Clean up old temporary files and processing status"""
@@ -407,9 +411,18 @@ async def process_documents_async(
                 raise Exception("Failed to create Excel file")
             
             try:
+                # Verify file exists and is readable
+                file_size = os.path.getsize(excel_file_path)
+                if file_size == 0:
+                    raise Exception("Generated Excel file is empty")
+                
+                # Move file to temp directory with unique name
+                temp_file_path = os.path.join(TEMP_DIR, f"{file_id}.xlsx")
+                os.rename(excel_file_path, temp_file_path)
+                
                 # Store file with metadata BEFORE updating status
-                logger.info(f"Storing Excel file at path: {excel_file_path}")
-                temp_files[file_id] = excel_file_path
+                logger.info(f"Storing Excel file at path: {temp_file_path}")
+                temp_files[file_id] = temp_file_path
                 
                 # Verify file is stored and accessible
                 if file_id not in temp_files:
@@ -417,6 +430,12 @@ async def process_documents_async(
                 
                 if not os.path.exists(temp_files[file_id]):
                     raise Exception("Stored file path is not accessible")
+                
+                # Verify file is readable
+                with open(temp_file_path, 'rb') as f:
+                    file_content = f.read()
+                    if len(file_content) == 0:
+                        raise Exception("Stored file is empty")
                 
                 # Update status to completed
                 total_duration = time.time() - start_time
@@ -430,14 +449,16 @@ async def process_documents_async(
                     "parsing_method": parsing_method,
                     "ai_duration": ai_duration,
                     "excel_duration": excel_duration,
-                    "file_path": excel_file_path  # Store the file path for debugging
+                    "file_path": temp_file_path,  # Store the file path for debugging
+                    "file_size": file_size  # Store file size for verification
                 })
                 
                 # Log file storage status
                 logger.info(f"File storage status:")
                 logger.info(f"File ID: {file_id}")
-                logger.info(f"File path: {excel_file_path}")
-                logger.info(f"File exists: {os.path.exists(excel_file_path)}")
+                logger.info(f"File path: {temp_file_path}")
+                logger.info(f"File exists: {os.path.exists(temp_file_path)}")
+                logger.info(f"File size: {file_size} bytes")
                 logger.info(f"File in temp_files: {file_id in temp_files}")
                 logger.info(f"Available files: {list(temp_files.keys())}")
                 
@@ -899,13 +920,22 @@ async def download_file(file_id: str):
         raise HTTPException(status_code=404, detail="File not found")
     
     try:
-        # Verify file is readable
+        # Verify file is readable and get its size
+        file_size = os.path.getsize(file_path)
+        logger.info(f"File size: {file_size} bytes")
+        
+        if file_size == 0:
+            logger.error(f"File is empty: {file_path}")
+            raise HTTPException(status_code=500, detail="File is empty")
+        
+        # Read the file into memory to verify it's valid
         with open(file_path, 'rb') as f:
-            # Just read a small chunk to verify
-            f.read(1)
+            file_content = f.read()
+            if len(file_content) == 0:
+                raise HTTPException(status_code=500, detail="File is empty")
         
         return FileResponse(
-            file_path,
+            path=file_path,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             filename="quotation.xlsx",
             background=None  # Ensure the file isn't deleted after sending
