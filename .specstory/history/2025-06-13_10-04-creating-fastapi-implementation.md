@@ -5209,3 +5209,364 @@ INFO:api.main:Message: {
 
 ---
 
+_**Assistant**_
+
+I see two issues here:
+
+1. The file is not being properly stored in `temp_files` before the download link is generated
+2. There's still a KeyError with the processing status
+
+Let me fix both issues:
+
+
+---
+
+```diff
+          logger.info(f"Starting async processing for {file_id}")
+          
+-         # Ensure processing status exists
+-         if file_id not in processing_status:
++         # Initialize both processing status and temp files
+          processing_status[file_id] = {
+              "status": "queued",
+```
+
+```diff
+              "status": "processing", 
+              "progress": "Extracting text...",
+-             "created_at": start_time,
+-             "current_step": "text_extraction"
+-         })
+-         
+-         processing_status[file_id].update({
+-             "status": "processing", 
+-             "progress": "Extracting text...",
+-             "created_at": start_time,
+              "current_step": "text_extraction"
+          })
+```
+
+```diff
+          # Check if we have any extracted text
+          if not extracted_texts:
+-             processing_status[file_id] = {
++             processing_status[file_id].update({
+                  "status": "error", 
+                  "message": "No valid text extracted",
+-                 "created_at": start_time,
+                  "completed_at": time.time()
+-             }
++             })
+              
+              error_message = {
+```
+
+```diff
+          model = initialize_model()
+          if not model:
+-             processing_status[file_id] = {
++             processing_status[file_id].update({
+                  "status": "error", 
+                  "message": "Failed to initialize AI model",
+-                 "created_at": start_time,
+                  "completed_at": time.time()
+-             }
++             })
+              
+              await send_chat_message_with_retry(space_name, {
+```
+
+```diff
+                  raise Exception("Failed to create Excel file")
+              
+-             # Store file with metadata
+-             file_id = str(uuid.uuid4())
++             # Store file with metadata BEFORE updating status
+              temp_files[file_id] = excel_file_path
+              
+```
+
+```diff
+                  "excel_duration": excel_duration
+              })
+-             
+-             # Create download URL
+-             download_url = f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+              
+              # Send comprehensive success message
+```
+
+```diff
+                         f"⏱️ **Processing time:** {total_duration:.1f} seconds\n"
+                         f"🤖 **AI method:** {parsing_method.replace('_', ' ').title()}\n\n"
+-                        f"**📥 [Download Excel Quotation]({download_url})**\n\n"
++                        f"**📥 [Download Excel Quotation]({processing_status[file_id]['download_url']})**\n\n"
+                         f"⏰ *Download link expires in 1 hour*",
+                         
+```
+
+```diff
+                                      "onClick": {
+                                          "openLink": {
+-                                             "url": download_url
++                                             "url": processing_status[file_id]['download_url']
+                                          }
+                                      }
+```
+
+```diff
+              logger.error(f"Error in quotation generation: {str(e)}", exc_info=True)
+              
+-             # Ensure processing status exists before updating
+-             if file_id not in processing_status:
+-                 processing_status[file_id] = {
+-                     "status": "error",
+-                     "message": str(e),
+-                     "created_at": start_time,
+-                     "completed_at": time.time(),
+-                     "error_duration": error_duration,
+-                     "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+-                 }
+-             else:
+              processing_status[file_id].update({
+                  "status": "error", 
+```
+
+```diff
+          logger.error(f"Critical error in async processing: {str(e)}", exc_info=True)
+          
+-         # Ensure processing status exists before updating
+-         if file_id not in processing_status:
+-             processing_status[file_id] = {
+-                 "status": "error",
+-                 "message": f"Critical processing error: {str(e)}",
+-                 "created_at": start_time,
+-                 "completed_at": time.time(),
+-                 "error_duration": error_duration,
+-                 "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+-             }
+-         else:
+          processing_status[file_id].update({
+              "status": "error", 
+```
+
+---
+
+I've made several important changes to fix the issues:
+
+1. **Fixed File Storage**:
+   - Now storing the Excel file in `temp_files` BEFORE updating the status
+   - Using the same `file_id` throughout the process instead of generating a new one
+   - Ensuring the file is stored before sending the success message
+
+2. **Fixed Processing Status**:
+   - Initializing the processing status at the very beginning of the function
+   - Using `.update()` consistently instead of reassigning the entire dictionary
+   - Maintaining the download URL throughout the process
+
+3. **Improved Error Handling**:
+   - Removed redundant status initialization in error handlers
+   - Using consistent status updates throughout
+   - Maintaining the download URL in all states
+
+4. **URL Consistency**:
+   - Using the same download URL from the processing status throughout
+   - Not regenerating URLs at different stages
+   - Ensuring the URL matches the stored file
+
+The key changes that should fix your specific issues:
+
+1. The "File not found or expired" error should be fixed because:
+   - We now store the file in `temp_files` before sending the success message
+   - We use the same `file_id` throughout the process
+   - The download URL is consistent with the stored file
+
+2. The KeyError should be fixed because:
+   - We initialize the processing status at the start
+   - We use `.update()` consistently instead of reassignment
+   - We maintain the status throughout the process
+
+Would you like me to make any additional changes or improvements to the code?
+
+---
+
+_**User**_
+
+after file generation is compleetd and I click on the link this comes up - {"detail":"File not found or expired"}
+
+---
+
+_**Assistant**_
+
+Let me check the download endpoint and file storage logic. The issue might be with how we're handling the file paths or the download endpoint.
+
+
+---
+
+```diff
+              
+              # Store file with metadata BEFORE updating status
++             logger.info(f"Storing Excel file at path: {excel_file_path}")
+              temp_files[file_id] = excel_file_path
++             
++             # Verify file is stored and accessible
++             if file_id not in temp_files:
++                 raise Exception("Failed to store Excel file")
++             
++             if not os.path.exists(temp_files[file_id]):
++                 raise Exception("Stored file path is not accessible")
+              
+              # Update status to completed
+```
+
+```diff
+                  "parsing_method": parsing_method,
+                  "ai_duration": ai_duration,
+-                 "excel_duration": excel_duration
++                 "excel_duration": excel_duration,
++                 "file_path": excel_file_path  # Store the file path for debugging
+              })
+              
+```
+
+```diff
+                  }]
+              }
++             
++             # Log file storage status
++             logger.info(f"File storage status:")
++             logger.info(f"File ID: {file_id}")
++             logger.info(f"File path: {excel_file_path}")
++             logger.info(f"File exists: {os.path.exists(excel_file_path)}")
++             logger.info(f"File in temp_files: {file_id in temp_files}")
++             logger.info(f"Available files: {list(temp_files.keys())}")
+              
+              await send_chat_message_with_retry(space_name, success_message)
+```
+
+```diff
+  async def download_file(file_id: str):
+      """Download generated Excel file"""
++     logger.info(f"Download request for file_id: {file_id}")
++     logger.info(f"Available files: {list(temp_files.keys())}")
++     
+      if file_id not in temp_files:
++         logger.error(f"File not found in temp_files: {file_id}")
+          raise HTTPException(status_code=404, detail="File not found or expired")
+      
+      file_path = temp_files[file_id]
++     logger.info(f"File path: {file_path}")
+      
+      if not os.path.exists(file_path):
+-         temp_files.pop(file_id, None)
++         logger.error(f"File does not exist at path: {file_path}")
++         temp_files.pop(file_id, None)  # Clean up the reference
+          raise HTTPException(status_code=404, detail="File not found")
++     
++     try:
++         # Verify file is readable
++         with open(file_path, 'rb') as f:
++             # Just read a small chunk to verify
++             f.read(1)
+          
+          return FileResponse(
+              file_path,
+              media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+-         filename="quotation.xlsx"
++             filename="quotation.xlsx",
++             background=None  # Ensure the file isn't deleted after sending
+          )
++     except Exception as e:
++         logger.error(f"Error serving file {file_id}: {str(e)}")
++         raise HTTPException(status_code=500, detail=f"Error serving file: {str(e)}")
+  
+  def is_valid_file_type(filename: str) -> bool:
+```
+
+---
+
+Let me fix the linter errors and make the code more robust:
+
+
+---
+
+```diff
+                  raise Exception("Failed to create Excel file")
+              
++             try:
+                  # Store file with metadata BEFORE updating status
+                  logger.info(f"Storing Excel file at path: {excel_file_path}")
+```
+
+```diff
+                      "file_path": excel_file_path  # Store the file path for debugging
+                  })
++                 
++                 # Log file storage status
++                 logger.info(f"File storage status:")
++                 logger.info(f"File ID: {file_id}")
++                 logger.info(f"File path: {excel_file_path}")
++                 logger.info(f"File exists: {os.path.exists(excel_file_path)}")
++                 logger.info(f"File in temp_files: {file_id in temp_files}")
++                 logger.info(f"Available files: {list(temp_files.keys())}")
+                  
+                  # Send comprehensive success message
+```
+
+```diff
+                      }]
+                  }
+-             
+-             # Log file storage status
+-             logger.info(f"File storage status:")
+-             logger.info(f"File ID: {file_id}")
+-             logger.info(f"File path: {excel_file_path}")
+-             logger.info(f"File exists: {os.path.exists(excel_file_path)}")
+-             logger.info(f"File in temp_files: {file_id in temp_files}")
+-             logger.info(f"Available files: {list(temp_files.keys())}")
+                  
+                  await send_chat_message_with_retry(space_name, success_message)
+                  logger.info(f"Processing completed successfully for {file_id} in {total_duration:.1f}s")
++                 
++             except Exception as e:
++                 logger.error(f"Error storing or serving file: {str(e)}")
++                 # Clean up the file if it exists
++                 if os.path.exists(excel_file_path):
++                     try:
++                         os.unlink(excel_file_path)
++                     except Exception as cleanup_error:
++                         logger.error(f"Error cleaning up file: {cleanup_error}")
++                 raise
+          
+          except Exception as e:
+```
+
+---
+
+I've made several improvements to fix the file download issues:
+
+1. **Better File Storage Verification**:
+   - Added explicit checks to verify file storage
+   - Added more detailed logging of file storage status
+   - Added cleanup in case of storage failures
+
+2. **Improved Download Endpoint**:
+   - Added more detailed logging
+   - Added file existence and readability checks
+   - Added proper error handling and cleanup
+   - Ensured files aren't deleted after sending
+
+3. **Better Error Handling**:
+   - Added nested try-except blocks to handle file operations
+   - Added cleanup of temporary files on failure
+   - Added more detailed error logging
+
+4. **File Path Management**:
+   - Store file path in processing status for debugging
+   - Verify file existence before and after storage
+   - Clean up files if storage fails
+
+The key ch
+
+---
+

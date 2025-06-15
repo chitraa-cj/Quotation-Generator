@@ -149,7 +149,7 @@ async def send_chat_message_with_retry(space_name: str, message_data: Dict[str, 
             logger.error(f"Failed to send chat message (attempt {attempt + 1}): {str(e)}")
             if attempt < max_retries - 1:
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
-            else:
+        else:
                 return False
 
 async def process_documents_async(
@@ -406,55 +406,83 @@ async def process_documents_async(
             if not os.path.exists(excel_file_path):
                 raise Exception("Failed to create Excel file")
             
-            # Store file with metadata BEFORE updating status
-            temp_files[file_id] = excel_file_path
-            
-            # Update status to completed
-            total_duration = time.time() - start_time
-            processing_status[file_id].update({
-                "status": "completed", 
-                "created_at": start_time,
-                "completed_at": time.time(),
-                "total_duration": total_duration,
-                "files_processed": len(processed_file_names),
-                "text_length": combined_length,
-                "parsing_method": parsing_method,
-                "ai_duration": ai_duration,
-                "excel_duration": excel_duration
-            })
-            
-            # Send comprehensive success message
-            success_message = {
-                "text": f"✅ **Quotation Generated Successfully!**\n\n"
-                       f"📊 **Excel file ready for download**\n"
-                       f"📁 **Files processed:** {len(processed_file_names)}\n"
-                       f"📝 **Text extracted:** {combined_length:,} characters\n"
-                       f"⏱️ **Processing time:** {total_duration:.1f} seconds\n"
-                       f"🤖 **AI method:** {parsing_method.replace('_', ' ').title()}\n\n"
-                       f"**📥 [Download Excel Quotation]({processing_status[file_id]['download_url']})**\n\n"
-                       f"⏰ *Download link expires in 1 hour*",
-                       
-                "cards": [{
-                    "sections": [{
-                        "widgets": [{
-                            "buttons": [{
-                                "textButton": {
-                                    "text": "📥 DOWNLOAD QUOTATION",
-                                    "onClick": {
-                                        "openLink": {
-                                            "url": processing_status[file_id]['download_url']
+            try:
+                # Store file with metadata BEFORE updating status
+                logger.info(f"Storing Excel file at path: {excel_file_path}")
+                temp_files[file_id] = excel_file_path
+                
+                # Verify file is stored and accessible
+                if file_id not in temp_files:
+                    raise Exception("Failed to store Excel file")
+                
+                if not os.path.exists(temp_files[file_id]):
+                    raise Exception("Stored file path is not accessible")
+                
+                # Update status to completed
+                total_duration = time.time() - start_time
+                processing_status[file_id].update({
+                    "status": "completed", 
+                    "created_at": start_time,
+                    "completed_at": time.time(),
+                    "total_duration": total_duration,
+                    "files_processed": len(processed_file_names),
+                    "text_length": combined_length,
+                    "parsing_method": parsing_method,
+                    "ai_duration": ai_duration,
+                    "excel_duration": excel_duration,
+                    "file_path": excel_file_path  # Store the file path for debugging
+                })
+                
+                # Log file storage status
+                logger.info(f"File storage status:")
+                logger.info(f"File ID: {file_id}")
+                logger.info(f"File path: {excel_file_path}")
+                logger.info(f"File exists: {os.path.exists(excel_file_path)}")
+                logger.info(f"File in temp_files: {file_id in temp_files}")
+                logger.info(f"Available files: {list(temp_files.keys())}")
+                
+                # Send comprehensive success message
+                success_message = {
+                    "text": f"✅ **Quotation Generated Successfully!**\n\n"
+                           f"📊 **Excel file ready for download**\n"
+                           f"📁 **Files processed:** {len(processed_file_names)}\n"
+                           f"📝 **Text extracted:** {combined_length:,} characters\n"
+                           f"⏱️ **Processing time:** {total_duration:.1f} seconds\n"
+                           f"🤖 **AI method:** {parsing_method.replace('_', ' ').title()}\n\n"
+                           f"**📥 [Download Excel Quotation]({processing_status[file_id]['download_url']})**\n\n"
+                           f"⏰ *Download link expires in 1 hour*",
+                           
+                    "cards": [{
+                        "sections": [{
+                            "widgets": [{
+                                "buttons": [{
+                                    "textButton": {
+                                        "text": "📥 DOWNLOAD QUOTATION",
+                                        "onClick": {
+                                            "openLink": {
+                                                "url": processing_status[file_id]['download_url']
+                                            }
                                         }
                                     }
-                                }
+                                }]
                             }]
                         }]
                     }]
-                }]
-            }
-            
-            await send_chat_message_with_retry(space_name, success_message)
-            logger.info(f"Processing completed successfully for {file_id} in {total_duration:.1f}s")
-            
+                }
+                
+                await send_chat_message_with_retry(space_name, success_message)
+                logger.info(f"Processing completed successfully for {file_id} in {total_duration:.1f}s")
+                
+            except Exception as e:
+                logger.error(f"Error storing or serving file: {str(e)}")
+                # Clean up the file if it exists
+                if os.path.exists(excel_file_path):
+                    try:
+                        os.unlink(excel_file_path)
+                    except Exception as cleanup_error:
+                        logger.error(f"Error cleaning up file: {cleanup_error}")
+                raise
+        
         except Exception as e:
             error_duration = time.time() - start_time
             logger.error(f"Error in quotation generation: {str(e)}", exc_info=True)
@@ -729,7 +757,7 @@ async def ping():
         "status": "pong",
         "timestamp": time.time(),
         "message": "Bot is alive and responding"
-    }
+        }
 
 @app.post("/process-documents")
 async def process_documents(files: List[UploadFile] = File(...)):
@@ -855,20 +883,36 @@ async def process_documents(files: List[UploadFile] = File(...)):
 @app.get("/download/{file_id}")
 async def download_file(file_id: str):
     """Download generated Excel file"""
+    logger.info(f"Download request for file_id: {file_id}")
+    logger.info(f"Available files: {list(temp_files.keys())}")
+    
     if file_id not in temp_files:
+        logger.error(f"File not found in temp_files: {file_id}")
         raise HTTPException(status_code=404, detail="File not found or expired")
     
     file_path = temp_files[file_id]
+    logger.info(f"File path: {file_path}")
     
     if not os.path.exists(file_path):
-        temp_files.pop(file_id, None)
+        logger.error(f"File does not exist at path: {file_path}")
+        temp_files.pop(file_id, None)  # Clean up the reference
         raise HTTPException(status_code=404, detail="File not found")
     
-    return FileResponse(
-        file_path,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename="quotation.xlsx"
-    )
+    try:
+        # Verify file is readable
+        with open(file_path, 'rb') as f:
+            # Just read a small chunk to verify
+            f.read(1)
+        
+        return FileResponse(
+            file_path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename="quotation.xlsx",
+            background=None  # Ensure the file isn't deleted after sending
+        )
+    except Exception as e:
+        logger.error(f"Error serving file {file_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving file: {str(e)}")
 
 def is_valid_file_type(filename: str) -> bool:
     """Validate file types"""
