@@ -420,7 +420,7 @@ async def process_documents_async(
             }
             
             # Create download URL
-            download_url = f"https://51.21.187.10:8000/download/{file_id}"
+            download_url = f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
             
             # Send comprehensive success message
             success_message = {
