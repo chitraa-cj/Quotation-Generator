@@ -225,11 +225,11 @@ async def process_documents_async(
         
         # Send initial detailed status
         await send_chat_message_with_retry(space_name, {
-            "text": f"🔄 **Processing Started**\n\n"
-                   f"📊 **Files:** {len(processed_files)} document(s)\n"
-                   f"⏱️ **Started:** {datetime.now().strftime('%H:%M:%S')}\n"
-                   f"📥 **Download:** [Click here]({download_url})\n\n"
-                   f"**Status:** Extracting text from files..."
+            "text": f"🔄 Processing Started\n\n"
+                   f"📊 Files: {len(processed_files)} document(s)\n"
+                   f"⏱️ Started: {datetime.now().strftime('%H:%M:%S')}\n"
+                   f"📥 Download: [Click here]({download_url})\n\n"
+                   f"Status: Extracting text from files..."
         })
         
         # Update processing status
@@ -313,12 +313,12 @@ async def process_documents_async(
             })
             
             error_message = {
-                "text": f"❌ **Processing Failed**\n\n"
+                "text": f"❌ Processing Failed\n\n"
                        f"No readable text could be extracted from the files.\n\n"
-                       f"**Files Processed:**\n" + "\n".join(debug_info[:10]) + 
+                       f"Files Processed:\n" + "\n".join(debug_info[:10]) + 
                        (f"\n... and {len(debug_info) - 10} more" if len(debug_info) > 10 else "") +
-                       f"\n\n**Supported Formats:** PDF, DOCX, DOC, TXT, RTF\n"
-                       f"**Common Issues:**\n"
+                       f"\n\nSupported Formats: PDF, DOCX, DOC, TXT, RTF\n"
+                       f"Common Issues:\n"
                        f"• Scanned PDFs without OCR\n"
                        f"• Password-protected files\n"
                        f"• Corrupted/empty files\n"
@@ -489,13 +489,13 @@ async def process_documents_async(
                 
                 # Send comprehensive success message
                 success_message = {
-                    "text": f"✅ **Quotation Generated Successfully!**\n\n"
-                           f"📊 **Excel file ready for download**\n"
-                           f"📁 **Files processed:** {len(processed_file_names)}\n"
-                           f"📝 **Text extracted:** {combined_length:,} characters\n"
-                           f"⏱️ **Processing time:** {total_duration:.1f} seconds\n"
-                           f"🤖 **AI method:** {parsing_method.replace('_', ' ').title()}\n\n"
-                           f"**📥 [Download Excel Quotation]({download_url})**\n\n"
+                    "text": f"✅ Quotation Generated Successfully\n\n"
+                           f"📊 Excel file ready for download\n"
+                           f"📁 Files processed: {len(processed_file_names)}\n"
+                           f"📝 Text extracted: {combined_length:,} characters\n"
+                           f"⏱️ Processing time: {total_duration:.1f} seconds\n"
+                           f"🤖 AI method: {parsing_method.replace('_', ' ').title()}\n\n"
+                           f"📥 [Download Excel Quotation]({download_url})\n\n"
                            f"⏰ *Download link expires in 1 hour*",
                            
                     "cards": [{
@@ -640,14 +640,14 @@ async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
                     }
                 else:
                     response = {
-                        "text": "👋 **Welcome to Quotation Generator!**\n\n"
+                        "text": "👋 Welcome to Quotation Generator!\n\n"
                                "To create a quotation, please:\n"
-                               "📎 **Attach your documents** to this message\n\n"
-                               "**Supported formats:**\n"
+                               "📎 Attach your documents to this message\n\n"
+                               "Supported formats:\n"
                                "• PDF documents\n"
                                "• Word files (DOCX, DOC)\n"
                                "• Text files (TXT, RTF)\n\n"
-                               "**Features:**\n"
+                               "Features:\n"
                                "✅ AI-powered text extraction\n"
                                "✅ Professional Excel quotations\n"
                                "✅ Fast processing (2-5 minutes)\n"
@@ -686,16 +686,16 @@ async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
             
             # Return immediate acknowledgment response with download link
             response = {
-                "text": f"🚀 **Processing Started!**\n\n"
-                       f"📊 **Files received:** {len(processed_files)} document(s)\n"
-                       f"⏱️ **Estimated time:** 2-5 minutes\n"
-                       f"🤖 **AI Model:** Gemini 2.0 Flash\n\n"
-                       f"**What happens next:**\n"
+                "text": f"🚀 Processing Started!\n\n"
+                       f"📊 Files received: {len(processed_files)} document(s)\n"
+                       f"⏱️ Estimated time: 2-5 minutes\n"
+                       f"🤖 AI Model: Gemini 2.0 Flash\n\n"
+                       f"What happens next:\n"
                        f"1. ⚡ Text extraction from files\n"
                        f"2. 🤖 AI quotation generation\n"
                        f"3. 📊 Excel spreadsheet creation\n"
                        f"4. 📥 Download link delivery\n\n"
-                       f"**📥 [Download Link]({download_url})**\n"
+                       f"📥 [Download Link]({download_url})\n"
                        f"*This link will be active once processing is complete*\n\n"
                        f"*I'll update you with progress messages!*"
             }
