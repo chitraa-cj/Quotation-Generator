@@ -156,6 +156,36 @@ async def send_chat_message_with_retry(space_name: str, message_data: Dict[str, 
         else:
                 return False
 
+def store_file(file_id: str, source_path: str) -> str:
+    """Store a file in the temp directory and return its path"""
+    try:
+        # Create a unique filename
+        temp_file_path = os.path.join(TEMP_DIR, f"{file_id}.xlsx")
+        
+        # Copy the file instead of moving it
+        import shutil
+        shutil.copy2(source_path, temp_file_path)
+        
+        # Verify the file was copied successfully
+        if not os.path.exists(temp_file_path):
+            raise Exception("Failed to copy file to temp directory")
+        
+        # Verify file is readable and not empty
+        file_size = os.path.getsize(temp_file_path)
+        if file_size == 0:
+            raise Exception("Copied file is empty")
+        
+        # Store the path in temp_files
+        temp_files[file_id] = temp_file_path
+        
+        logger.info(f"Successfully stored file {file_id} at {temp_file_path}")
+        logger.info(f"File size: {file_size} bytes")
+        
+        return temp_file_path
+    except Exception as e:
+        logger.error(f"Error storing file {file_id}: {str(e)}")
+        raise
+
 async def process_documents_async(
     space_name: str,
     processed_files: List[Dict],
@@ -411,31 +441,8 @@ async def process_documents_async(
                 raise Exception("Failed to create Excel file")
             
             try:
-                # Verify file exists and is readable
-                file_size = os.path.getsize(excel_file_path)
-                if file_size == 0:
-                    raise Exception("Generated Excel file is empty")
-                
-                # Move file to temp directory with unique name
-                temp_file_path = os.path.join(TEMP_DIR, f"{file_id}.xlsx")
-                os.rename(excel_file_path, temp_file_path)
-                
-                # Store file with metadata BEFORE updating status
-                logger.info(f"Storing Excel file at path: {temp_file_path}")
-                temp_files[file_id] = temp_file_path
-                
-                # Verify file is stored and accessible
-                if file_id not in temp_files:
-                    raise Exception("Failed to store Excel file")
-                
-                if not os.path.exists(temp_files[file_id]):
-                    raise Exception("Stored file path is not accessible")
-                
-                # Verify file is readable
-                with open(temp_file_path, 'rb') as f:
-                    file_content = f.read()
-                    if len(file_content) == 0:
-                        raise Exception("Stored file is empty")
+                # Store the file in temp directory
+                temp_file_path = store_file(file_id, excel_file_path)
                 
                 # Update status to completed
                 total_duration = time.time() - start_time
@@ -450,7 +457,7 @@ async def process_documents_async(
                     "ai_duration": ai_duration,
                     "excel_duration": excel_duration,
                     "file_path": temp_file_path,  # Store the file path for debugging
-                    "file_size": file_size  # Store file size for verification
+                    "file_size": os.path.getsize(temp_file_path)  # Store file size for verification
                 })
                 
                 # Log file storage status
@@ -458,7 +465,7 @@ async def process_documents_async(
                 logger.info(f"File ID: {file_id}")
                 logger.info(f"File path: {temp_file_path}")
                 logger.info(f"File exists: {os.path.exists(temp_file_path)}")
-                logger.info(f"File size: {file_size} bytes")
+                logger.info(f"File size: {os.path.getsize(temp_file_path)} bytes")
                 logger.info(f"File in temp_files: {file_id in temp_files}")
                 logger.info(f"Available files: {list(temp_files.keys())}")
                 

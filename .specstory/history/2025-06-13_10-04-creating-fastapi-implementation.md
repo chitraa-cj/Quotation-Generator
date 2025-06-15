@@ -5597,3 +5597,150 @@ Let me help fix the download link issue. The problem seems to be that the file i
 
 ---
 
+
+
+---
+
+Let me try a different approach to fix the file storage issue:
+
+
+---
+
+```diff
+  MAX_RESPONSE_TIME = 25    # seconds - our safe limit
+  CLEANUP_INTERVAL = 3600   # 1 hour
++ TEMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "temp_files")
++ 
++ # Ensure temp directory exists
++ os.makedirs(TEMP_DIR, exist_ok=True)
+  
+  def cleanup_old_files():
+```
+
+```diff
+              
+              try:
++                 # Verify file exists and is readable
++                 file_size = os.path.getsize(excel_file_path)
++                 if file_size == 0:
++                     raise Exception("Generated Excel file is empty")
++                 
++                 # Move file to temp directory with unique name
++                 temp_file_path = os.path.join(TEMP_DIR, f"{file_id}.xlsx")
++                 os.rename(excel_file_path, temp_file_path)
++                 
+                  # Store file with metadata BEFORE updating status
+-                 logger.info(f"Storing Excel file at path: {excel_file_path}")
+-                 temp_files[file_id] = excel_file_path
++                 logger.info(f"Storing Excel file at path: {temp_file_path}")
++                 temp_files[file_id] = temp_file_path
+                  
+                  # Verify file is stored and accessible
+```
+
+```diff
+                      raise Exception("Stored file path is not accessible")
+                  
++                 # Verify file is readable
++                 with open(temp_file_path, 'rb') as f:
++                     file_content = f.read()
++                     if len(file_content) == 0:
++                         raise Exception("Stored file is empty")
++                 
+                  # Update status to completed
+                  total_duration = time.time() - start_time
+```
+
+```diff
+                      "ai_duration": ai_duration,
+                      "excel_duration": excel_duration,
+-                     "file_path": excel_file_path  # Store the file path for debugging
++                     "file_path": temp_file_path,  # Store the file path for debugging
++                     "file_size": file_size  # Store file size for verification
+                  })
+                  
+                  # Log file storage status
+                  logger.info(f"File storage status:")
+                  logger.info(f"File ID: {file_id}")
+-                 logger.info(f"File path: {excel_file_path}")
+-                 logger.info(f"File exists: {os.path.exists(excel_file_path)}")
++                 logger.info(f"File path: {temp_file_path}")
++                 logger.info(f"File exists: {os.path.exists(temp_file_path)}")
++                 logger.info(f"File size: {file_size} bytes")
+                  logger.info(f"File in temp_files: {file_id in temp_files}")
+                  logger.info(f"Available files: {list(temp_files.keys())}")
+```
+
+```diff
+      
+      try:
+-         # Verify file is readable
++         # Verify file is readable and get its size
++         file_size = os.path.getsize(file_path)
++         logger.info(f"File size: {file_size} bytes")
++         
++         if file_size == 0:
++             logger.error(f"File is empty: {file_path}")
++             raise HTTPException(status_code=500, detail="File is empty")
++         
++         # Read the file into memory to verify it's valid
+          with open(file_path, 'rb') as f:
+-             # Just read a small chunk to verify
+-             f.read(1)
++             file_content = f.read()
++             if len(file_content) == 0:
++                 raise HTTPException(status_code=500, detail="File is empty")
+          
+          return FileResponse(
+-             file_path,
++             path=file_path,
+              media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              filename="quotation.xlsx",
+```
+
+---
+
+I've made several important changes to fix the file download issue:
+
+1. **Dedicated Temp Directory**:
+   - Created a dedicated `temp_files` directory in the API folder
+   - Files are now stored with consistent naming (`{file_id}.xlsx`)
+   - The directory is created if it doesn't exist
+
+2. **Improved File Storage**:
+   - Files are now moved to the temp directory with a unique name
+   - Added file size verification before storage
+   - Added file content verification to ensure files are not empty
+
+3. **Better File Verification**:
+   - Added file size checks
+   - Added complete file content verification
+   - Added more detailed logging of file status
+
+4. **Enhanced Error Handling**:
+   - Added specific error messages for empty files
+   - Added file size logging
+   - Added more detailed error reporting
+
+The key changes are:
+1. Files are now stored in a dedicated directory with consistent naming
+2. Files are verified for size and content before being served
+3. The file path is properly tracked in both `temp_files` and `processing_status`
+4. Added more robust error handling and logging
+
+This should fix the "File not found or expired" error because:
+1. Files are now stored in a dedicated directory
+2. Files are properly verified before being served
+3. The file paths are consistently tracked
+4. Empty or invalid files are caught early
+
+Would you like me to make any additional improvements to the file handling logic?
+
+---
+
+_**User**_
+
+still after the input file processing is doen and quotatio is generated - {"detail":"File not found or expired"} this comes up when link is opeoend the download ink should be valid
+
+---
+
