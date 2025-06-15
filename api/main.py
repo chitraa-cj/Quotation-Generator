@@ -159,6 +159,9 @@ async def send_chat_message_with_retry(space_name: str, message_data: Dict[str, 
 def store_file(file_id: str, source_path: str) -> str:
     """Store a file in the temp directory and return its path"""
     try:
+        # Clean file_id to ensure it's valid
+        file_id = file_id.strip()
+        
         # Create a unique filename
         temp_file_path = os.path.join(TEMP_DIR, f"{file_id}.xlsx")
         
@@ -178,8 +181,18 @@ def store_file(file_id: str, source_path: str) -> str:
         # Store the path in temp_files
         temp_files[file_id] = temp_file_path
         
+        # Update processing status with file info
+        if file_id in processing_status:
+            processing_status[file_id].update({
+                "file_path": temp_file_path,
+                "file_size": file_size,
+                "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+            })
+        
         logger.info(f"Successfully stored file {file_id} at {temp_file_path}")
         logger.info(f"File size: {file_size} bytes")
+        logger.info(f"File in temp_files: {file_id in temp_files}")
+        logger.info(f"Available files: {list(temp_files.keys())}")
         
         return temp_file_path
     except Exception as e:
@@ -198,12 +211,16 @@ async def process_documents_async(
     try:
         logger.info(f"Starting async processing for {file_id}")
         
+        # Clean file_id to ensure it's valid
+        file_id = file_id.strip()
+        download_url = f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+        
         # Initialize both processing status and temp files
         processing_status[file_id] = {
             "status": "queued",
             "progress": "Initializing...",
             "created_at": start_time,
-            "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+            "download_url": download_url
         }
         
         # Send initial detailed status
@@ -211,7 +228,7 @@ async def process_documents_async(
             "text": f"🔄 **Processing Started**\n\n"
                    f"📊 **Files:** {len(processed_files)} document(s)\n"
                    f"⏱️ **Started:** {datetime.now().strftime('%H:%M:%S')}\n"
-                   f"📥 **Download:** [Click here]({processing_status[file_id]['download_url']})\n\n"
+                   f"📥 **Download:** [Click here]({download_url})\n\n"
                    f"**Status:** Extracting text from files..."
         })
         
@@ -468,6 +485,7 @@ async def process_documents_async(
                 logger.info(f"File size: {os.path.getsize(temp_file_path)} bytes")
                 logger.info(f"File in temp_files: {file_id in temp_files}")
                 logger.info(f"Available files: {list(temp_files.keys())}")
+                logger.info(f"Processing status: {processing_status[file_id]}")
                 
                 # Send comprehensive success message
                 success_message = {
@@ -477,7 +495,7 @@ async def process_documents_async(
                            f"📝 **Text extracted:** {combined_length:,} characters\n"
                            f"⏱️ **Processing time:** {total_duration:.1f} seconds\n"
                            f"🤖 **AI method:** {parsing_method.replace('_', ' ').title()}\n\n"
-                           f"**📥 [Download Excel Quotation]({processing_status[file_id]['download_url']})**\n\n"
+                           f"**📥 [Download Excel Quotation]({download_url})**\n\n"
                            f"⏰ *Download link expires in 1 hour*",
                            
                     "cards": [{
@@ -488,7 +506,7 @@ async def process_documents_async(
                                         "text": "📥 DOWNLOAD QUOTATION",
                                         "onClick": {
                                             "openLink": {
-                                                "url": processing_status[file_id]['download_url']
+                                                "url": download_url
                                             }
                                         }
                                     }
@@ -911,8 +929,12 @@ async def process_documents(files: List[UploadFile] = File(...)):
 @app.get("/download/{file_id}")
 async def download_file(file_id: str):
     """Download generated Excel file"""
+    # Clean file_id to ensure it's valid
+    file_id = file_id.strip()
+    
     logger.info(f"Download request for file_id: {file_id}")
     logger.info(f"Available files: {list(temp_files.keys())}")
+    logger.info(f"Processing status: {processing_status.get(file_id, 'Not found')}")
     
     if file_id not in temp_files:
         logger.error(f"File not found in temp_files: {file_id}")
