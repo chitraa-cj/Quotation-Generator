@@ -164,6 +164,15 @@ async def process_documents_async(
     try:
         logger.info(f"Starting async processing for {file_id}")
         
+        # Ensure processing status exists
+        if file_id not in processing_status:
+            processing_status[file_id] = {
+                "status": "queued",
+                "progress": "Initializing...",
+                "created_at": start_time,
+                "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+            }
+        
         # Send initial detailed status
         await send_chat_message_with_retry(space_name, {
             "text": f"🔄 **Processing Started**\n\n"
@@ -171,6 +180,14 @@ async def process_documents_async(
                    f"⏱️ **Started:** {datetime.now().strftime('%H:%M:%S')}\n"
                    f"📥 **Download:** [Click here]({processing_status[file_id]['download_url']})\n\n"
                    f"**Status:** Extracting text from files..."
+        })
+        
+        # Update processing status
+        processing_status[file_id].update({
+            "status": "processing", 
+            "progress": "Extracting text...",
+            "created_at": start_time,
+            "current_step": "text_extraction"
         })
         
         processing_status[file_id].update({
@@ -457,13 +474,23 @@ async def process_documents_async(
             error_duration = time.time() - start_time
             logger.error(f"Error in quotation generation: {str(e)}", exc_info=True)
             
-            processing_status[file_id] = {
-                "status": "error", 
-                "message": str(e),
-                "created_at": start_time,
-                "completed_at": time.time(),
-                "error_duration": error_duration
-            }
+            # Ensure processing status exists before updating
+            if file_id not in processing_status:
+                processing_status[file_id] = {
+                    "status": "error",
+                    "message": str(e),
+                    "created_at": start_time,
+                    "completed_at": time.time(),
+                    "error_duration": error_duration,
+                    "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+                }
+            else:
+                processing_status[file_id].update({
+                    "status": "error", 
+                    "message": str(e),
+                    "completed_at": time.time(),
+                    "error_duration": error_duration
+                })
             
             error_message = {
                 "text": f"❌ **Quotation Generation Failed**\n\n"
@@ -478,13 +505,23 @@ async def process_documents_async(
         error_duration = time.time() - start_time
         logger.error(f"Critical error in async processing: {str(e)}", exc_info=True)
         
-        processing_status[file_id] = {
-            "status": "error", 
-            "message": f"Critical processing error: {str(e)}",
-            "created_at": start_time,
-            "completed_at": time.time(),
-            "error_duration": error_duration
-        }
+        # Ensure processing status exists before updating
+        if file_id not in processing_status:
+            processing_status[file_id] = {
+                "status": "error",
+                "message": f"Critical processing error: {str(e)}",
+                "created_at": start_time,
+                "completed_at": time.time(),
+                "error_duration": error_duration,
+                "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
+            }
+        else:
+            processing_status[file_id].update({
+                "status": "error", 
+                "message": f"Critical processing error: {str(e)}",
+                "completed_at": time.time(),
+                "error_duration": error_duration
+            })
         
         error_message = {
             "text": f"❌ **System Error**\n\n"
