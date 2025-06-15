@@ -5061,3 +5061,151 @@ INFO:api.main:Message: {
 
 ---
 
+_**Assistant**_
+
+I see the issue. The error occurs because we're trying to update the processing status before it's properly initialized. Let me fix this by ensuring the processing status is properly initialized before any updates.
+
+
+---
+
+```diff
+          logger.info(f"Starting async processing for {file_id}")
+          
++         # Ensure processing status exists
++         if file_id not in processing_status:
++             processing_status[file_id] = {
++                 "status": "queued",
++                 "progress": "Initializing...",
++                 "created_at": start_time,
++                 "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
++             }
++         
+          # Send initial detailed status
+          await send_chat_message_with_retry(space_name, {
+```
+
+```diff
+                     f"**Status:** Extracting text from files..."
+          })
++         
++         # Update processing status
++         processing_status[file_id].update({
++             "status": "processing", 
++             "progress": "Extracting text...",
++             "created_at": start_time,
++             "current_step": "text_extraction"
++         })
+          
+          processing_status[file_id].update({
+```
+
+---
+
+Let me also update the error handling to ensure we don't get KeyErrors in error cases:
+
+
+---
+
+```diff
+              logger.error(f"Error in quotation generation: {str(e)}", exc_info=True)
+              
++             # Ensure processing status exists before updating
++             if file_id not in processing_status:
+                  processing_status[file_id] = {
+                      "status": "error",
+                      "message": str(e),
+                      "created_at": start_time,
+                      "completed_at": time.time(),
++                     "error_duration": error_duration,
++                     "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
++                 }
++             else:
++                 processing_status[file_id].update({
++                     "status": "error", 
++                     "message": str(e),
++                     "completed_at": time.time(),
+                      "error_duration": error_duration
+-             }
++                 })
+              
+              error_message = {
+```
+
+```diff
+          logger.error(f"Critical error in async processing: {str(e)}", exc_info=True)
+          
++         # Ensure processing status exists before updating
++         if file_id not in processing_status:
+              processing_status[file_id] = {
+                  "status": "error",
+                  "message": f"Critical processing error: {str(e)}",
+                  "created_at": start_time,
+                  "completed_at": time.time(),
++                 "error_duration": error_duration,
++                 "download_url": f"https://quotebot-bluelabel.xoidlabs.com/api/download/{file_id}"
++             }
++         else:
++             processing_status[file_id].update({
++                 "status": "error", 
++                 "message": f"Critical processing error: {str(e)}",
++                 "completed_at": time.time(),
+                  "error_duration": error_duration
+-         }
++             })
+          
+          error_message = {
+```
+
+---
+
+I've made the following changes to fix the KeyError issue:
+
+1. **Initial Status Check**:
+   - Added a check at the start of `process_documents_async` to ensure the processing status exists
+   - If it doesn't exist, we initialize it with basic information including the download URL
+
+2. **Error Handling**:
+   - Updated both error handling blocks to check if the processing status exists
+   - If it doesn't exist, we create it with all necessary information
+   - If it exists, we update it with the error information
+
+3. **Status Updates**:
+   - Made sure all status updates use the `.update()` method to modify existing entries
+   - Added proper initialization of the download URL in all cases
+
+These changes should prevent the KeyError you encountered because:
+1. We check for the existence of the processing status before any updates
+2. We initialize the status with all required fields if it doesn't exist
+3. We maintain consistent status updates throughout the process
+
+The error you saw was happening because the processing status wasn't properly initialized before we tried to update it. Now, we ensure it exists before any operations.
+
+Would you like me to make any additional changes or improvements to the error handling?
+
+---
+
+_**User**_
+
+I get - {"detail":"File not found or expired"} after procesing is completed and -   "text": "\ud83d\udd04 **Almost Done!**\n\n\u2705 AI quotation generated\n\ud83d\udcca Creating Excel spreadsheet...\n\n\ud83c\udd94 ID: `78e7dfbb-6b01-4e81-bc84-ff4c19738f1d`"
+}...
+INFO:     192.178.15.71:0 - "GET /download/78e7dfbb-6b01-4e81-bc84-ff4c19738f1d%29%2A%2A HTTP/1.1" 404 Not Found
+INFO:api.main:Successfully parsed with standard JSON
+INFO:components.create_excel:
+=== Starting Excel Generation ===
+DEBUG:components.create_excel:Original sheet name: 'Venue and Logistics', Sanitized sheet name: 'Venue and Logistics'
+DEBUG:components.create_excel:Original sheet name: 'AV Equipment', Sanitized sheet name: 'AV Equipment'
+DEBUG:components.create_excel:Original sheet name: 'Labor', Sanitized sheet name: 'Labor'
+DEBUG:components.create_excel:Original sheet name: 'Additional Services', Sanitized sheet name: 'Additional Services'
+ERROR:api.main:Error in quotation generation: '91f8e290-c527-4706-91a8-4253d57b248e'
+Traceback (most recent call last):
+  File "/home/ubuntu/Quotation-Generator/api/main.py", line 426, in process_documents_async
+    processing_status[file_id].update({
+KeyError: '91f8e290-c527-4706-91a8-4253d57b248e'
+INFO:api.main:=== SENDING TO CHAT (Attempt 1) ===
+INFO:api.main:Space: spaces/rZtEACAAAAE
+INFO:api.main:Message: {
+  "text": "\u274c **Quotation Generation Failed**\n\n**Error:** '91f8e290-c527-4706-91a8-4253d57b248e'\n**Duration:** 24.5 seconds\n\nPlease try again or contact support if the issue persists.\n\n\ud83c\udd94 ID: `91f8e290-c527-4706-91a8-4253d57b248e`"
+
+
+---
+
