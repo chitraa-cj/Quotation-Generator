@@ -27,6 +27,7 @@ from components.generate_quotation import generate_quotation_prompt
 from utils import extract_text_from_file
 import json5
 from datetime import datetime, timedelta
+import zipfile
 
 app = FastAPI()
 
@@ -811,115 +812,119 @@ async def process_documents(files: List[UploadFile] = File(...)):
     try:
         logger.info(f"=== PROCESSING DIRECT UPLOAD ===")
         logger.info(f"Number of files: {len(files)}")
-        
         if not files:
             raise HTTPException(status_code=400, detail="No files provided")
-        
-        # Extract text from all uploaded files
         extracted_texts = []
         processed_files = []
-        
         for file in files:
             logger.info(f"Processing file: {file.filename}")
-            
-            # Validate file type
-            if not is_valid_file_type(file.filename):
-                logger.error(f"Unsupported file type: {file.filename}")
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Unsupported file type: {file.filename}"
-                )
-            
-            # Save file temporarily
-            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as temp_file:
-                content = await file.read()
-                temp_file.write(content)
-                temp_file_path = temp_file.name
-                
-            logger.info(f"Saved temp file: {temp_file_path}, size: {len(content)} bytes")
-            
-            try:
-                # Extract text from file
-                text = extract_text_from_file(temp_file_path, file.filename)
-                logger.info(f"Extracted text length: {len(text) if text else 0}")
-                
-                if text and text.strip():
-                    extracted_texts.append(text)
-                    processed_files.append(file.filename)
-                    logger.info(f"Successfully processed: {file.filename}")
-                else:
-                    logger.warning(f"No text extracted from {file.filename}")
-            except Exception as e:
-                logger.error(f"Error processing {file.filename}: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=400, detail=f"Error processing {file.filename}: {str(e)}")
-            finally:
-                # Clean up temp file
-                if os.path.exists(temp_file_path):
-                    os.unlink(temp_file_path)
-        
-        # Combine all extracted text
+            file_ext = Path(file.filename).suffix.lower()
+            if file_ext == '.zip':
+                # Handle zip file
+                logger.info(f"Unzipping file: {file.filename}")
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_zip_file:
+                    content = await file.read()
+                    temp_zip_file.write(content)
+                    temp_zip_file_path = temp_zip_file.name
+                try:
+                    with zipfile.ZipFile(temp_zip_file_path, 'r') as zip_ref:
+                        for zip_info in zip_ref.infolist():
+                            inner_name = zip_info.filename
+                            inner_ext = Path(inner_name).suffix.lower()
+                            if inner_ext in {'.pdf', '.docx', '.doc', '.txt', '.rtf'}:
+                                logger.info(f"Extracting and processing {inner_name} from zip")
+                                with zip_ref.open(zip_info) as inner_file:
+                                    inner_content = inner_file.read()
+                                    with tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext) as temp_inner_file:
+                                        temp_inner_file.write(inner_content)
+                                        temp_inner_file_path = temp_inner_file.name
+                                    try:
+                                        text = extract_text_from_file(temp_inner_file_path, inner_name)
+                                        logger.info(f"Extracted text length: {len(text) if text else 0}")
+                                        if text and text.strip():
+                                            extracted_texts.append(text)
+                                            processed_files.append(inner_name)
+                                            logger.info(f"Successfully processed: {inner_name}")
+                                        else:
+                                            logger.warning(f"No text extracted from {inner_name}")
+                                    except Exception as e:
+                                        logger.error(f"Error processing {inner_name}: {str(e)}", exc_info=True)
+                                    finally:
+                                        if os.path.exists(temp_inner_file_path):
+                                            os.unlink(temp_inner_file_path)
+                            else:
+                                logger.info(f"Skipping unsupported file in zip: {inner_name}")
+                finally:
+                    if os.path.exists(temp_zip_file_path):
+                        os.unlink(temp_zip_file_path)
+            else:
+                if not is_valid_file_type(file.filename):
+                    logger.error(f"Unsupported file type: {file.filename}")
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Unsupported file type: {file.filename}"
+                    )
+                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as temp_file:
+                    content = await file.read()
+                    temp_file.write(content)
+                    temp_file_path = temp_file.name
+                logger.info(f"Saved temp file: {temp_file_path}, size: {len(content)} bytes")
+                try:
+                    text = extract_text_from_file(temp_file_path, file.filename)
+                    logger.info(f"Extracted text length: {len(text) if text else 0}")
+                    if text and text.strip():
+                        extracted_texts.append(text)
+                        processed_files.append(file.filename)
+                        logger.info(f"Successfully processed: {file.filename}")
+                    else:
+                        logger.warning(f"No text extracted from {file.filename}")
+                except Exception as e:
+                    logger.error(f"Error processing {file.filename}: {str(e)}", exc_info=True)
+                    raise HTTPException(status_code=400, detail=f"Error processing {file.filename}: {str(e)}")
+                finally:
+                    if os.path.exists(temp_file_path):
+                        os.unlink(temp_file_path)
         input_docs_text = "\n".join(extracted_texts)
-        
         if not input_docs_text.strip():
             raise HTTPException(
                 status_code=400, 
                 detail="No text could be extracted from the files. Please check if files are corrupted or in unsupported format."
             )
-        
         logger.info(f"Combined extracted text length: {len(input_docs_text)} characters")
-        
-        # Initialize model and generate quotation
         model = initialize_model()
         if not model:
             raise HTTPException(status_code=500, detail="Failed to initialize AI model")
-        
-        # Generate quotation with retry logic
         try:
-            # Generate prompt and get response
-            prompt = generate_quotation_prompt([], input_docs_text)  # Empty examples list for now
+            prompt = generate_quotation_prompt([], input_docs_text)
             response_text = generate_quotation_with_retry(model, prompt)
-            
             if not response_text:
                 raise HTTPException(status_code=500, detail="Empty response from AI model")
-            
-            # Print raw response to terminal for debugging
             logger.info("\n=== Raw AI Response ===")
             logger.info(response_text)
-            
-            # Extract and parse the response
             try:
                 quotation_data = extract_json_from_response(response_text)
                 if not quotation_data:
                     raise HTTPException(status_code=500, detail="Failed to parse the AI response into a valid quotation format")
-                
-                # Create Excel file with proper formatting
                 excel_file_path = create_excel_from_quotation(quotation_data)
-                
                 if not os.path.exists(excel_file_path):
                     raise HTTPException(status_code=500, detail="Failed to create Excel file")
-                
-                # Store file temporarily with unique ID
                 file_id = str(uuid.uuid4())
                 temp_files[file_id] = excel_file_path
-                
                 return {
                     "message": "Quotation generated successfully!",
                     "download_url": f"/download/{file_id}",
                     "file_id": file_id,
                     "processed_files": processed_files,
                     "text_length": len(input_docs_text),
-                    "extraction_strategy": "direct_parse",  # Since we're using extract_json_from_response
+                    "extraction_strategy": "direct_parse",
                     "needs_review": False
                 }
-                
             except Exception as e:
                 logger.error(f"Error parsing AI response: {str(e)}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
-            
         except Exception as e:
             logger.error(f"Error generating quotation: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Error generating quotation: {str(e)}")
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -977,8 +982,7 @@ def is_valid_file_type(filename: str) -> bool:
     """Validate file types"""
     if not filename:
         return False
-    
-    allowed_extensions = {'.pdf', '.docx', '.doc', '.txt', '.rtf'}
+    allowed_extensions = {'.pdf', '.docx', '.doc', '.txt', '.rtf', '.zip'}
     file_ext = Path(filename).suffix.lower()
     return file_ext in allowed_extensions
 
