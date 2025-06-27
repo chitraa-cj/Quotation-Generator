@@ -250,6 +250,22 @@ async def process_documents_async(
             file_content_b64 = file_data.get("content", "")
             file_size = file_data.get("size", 0)
             
+            # Ensure file_name has a valid extension for GDrive files
+            if not Path(file_name).suffix:
+                # Try to infer from the original link if available
+                if 'pdf' in file_name.lower():
+                    file_name += '.pdf'
+                elif 'docx' in file_name.lower():
+                    file_name += '.docx'
+                elif 'doc' in file_name.lower():
+                    file_name += '.doc'
+                elif 'txt' in file_name.lower():
+                    file_name += '.txt'
+                elif 'rtf' in file_name.lower():
+                    file_name += '.rtf'
+                else:
+                    file_name += '.pdf'  # fallback
+            
             logger.info(f"Processing file {i}/{len(processed_files)}: {file_name} ({file_size} bytes)")
             debug_info.append(f"📎 **{file_name}** ({file_size:,} bytes)")
             

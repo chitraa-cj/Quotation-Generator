@@ -261,6 +261,13 @@ def download_gdrive_file(file_id: str, dest_dir: str) -> str:
         match = re.search('filename="(.+?)"', response.headers['Content-Disposition'])
         if match:
             filename = match.group(1)
+    # If no extension, try to guess from content-type
+    if '.' not in filename:
+        ext = mimetypes.guess_extension(response.headers.get('Content-Type', '').split(';')[0].strip())
+        if ext:
+            filename += ext
+        else:
+            filename += '.pdf'  # fallback default
     local_path = os.path.join(dest_dir, filename)
     with open(local_path, 'wb') as f:
         shutil.copyfileobj(response.raw, f)
