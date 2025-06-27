@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 import zipfile
 from pydantic import BaseModel
 from fastapi import Body
+import re
 
 app = FastAPI()
 
@@ -603,6 +604,10 @@ async def process_documents_async(
         }
         await send_chat_message_with_retry(space_name, error_message)
 
+def extract_gdrive_folder_links(text):
+    # Simple regex for GDrive folder links
+    return re.findall(r'https://drive\.google\.com/drive/folders/[\w-]+', text)
+
 @app.post("/chat-webhook")
 async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
     """Handle Google Chat webhook events with optimized response time"""
@@ -656,6 +661,23 @@ async def chat_webhook(request: Request, background_tasks: BackgroundTasks):
             
             logger.info(f"MESSAGE from {user_name} in {space_name}: '{text[:100]}...'")
             logger.info(f"Files: {len(processed_files)} for request {request_id}")
+            
+            # Check for GDrive folder link in message text
+            folder_links = extract_gdrive_folder_links(text)
+            if folder_links:
+                all_files = []
+                for folder_url in folder_links:
+                    folder_id = extract_gdrive_folder_id(folder_url)
+                    file_paths = download_gdrive_folder(folder_id, tempfile.gettempdir())
+                    for file_path in file_paths:
+                        with open(file_path, "rb") as f:
+                            content_b64 = base64.b64encode(f.read()).decode("utf-8")
+                        all_files.append({
+                            "name": os.path.basename(file_path),
+                            "content": content_b64,
+                            "size": os.path.getsize(file_path)
+                        })
+                processed_files = all_files
             
             # Quick validation and immediate response
             if not processed_files:
