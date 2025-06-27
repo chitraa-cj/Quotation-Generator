@@ -24,10 +24,12 @@ from components.extract_json import (
 )
 from components.create_excel import create_excel_from_quotation
 from components.generate_quotation import generate_quotation_prompt
-from utils import extract_text_from_file
+from utils import extract_text_from_file, download_file_from_url, is_url, is_gdrive_folder_link, download_gdrive_folder, extract_gdrive_folder_id
 import json5
 from datetime import datetime, timedelta
 import zipfile
+from pydantic import BaseModel
+from fastapi import Body
 
 app = FastAPI()
 
@@ -72,8 +74,6 @@ def cleanup_old_files():
                 if file_stat.st_mtime < cutoff_time:
                     os.unlink(file_path)
                     expired_files.append(file_id)
-            else:
-                expired_files.append(file_id)
         except Exception as e:
             logger.warning(f"Error cleaning up file {file_id}: {e}")
             expired_files.append(file_id)
@@ -499,23 +499,23 @@ async def process_documents_async(
                            f"📥 [Download Excel Quotation]({download_url})\n\n"
                            f"⏰ *Download link expires in 1 hour*",
                            
-                    "cards": [{
-                        "sections": [{
-                            "widgets": [{
-                                "buttons": [{
-                                    "textButton": {
-                                        "text": "📥 DOWNLOAD QUOTATION",
-                                        "onClick": {
-                                            "openLink": {
-                                                "url": download_url
-                                            }
-                                        }
+            "cards": [{
+                "sections": [{
+                    "widgets": [{
+                        "buttons": [{
+                            "textButton": {
+                                "text": "📥 DOWNLOAD QUOTATION",
+                                "onClick": {
+                                    "openLink": {
+                                        "url": download_url
                                     }
-                                }]
-                            }]
+                                }
+                            }
                         }]
                     }]
-                }
+                }]
+            }]
+        }
                 
                 await send_chat_message_with_retry(space_name, success_message)
                 logger.info(f"Processing completed successfully for {file_id} in {total_duration:.1f}s")
@@ -806,89 +806,137 @@ async def ping():
         "message": "Bot is alive and responding"
         }
 
+class UrlsRequest(BaseModel):
+    urls: list[str] = []
+
 @app.post("/process-documents")
-async def process_documents(files: List[UploadFile] = File(...)):
-    """Main endpoint for direct file upload and processing"""
+async def process_documents(
+    files: List[UploadFile] = File(None),
+    urls_req: UrlsRequest = Body(None)
+):
+    temp_paths = []
+    urls = urls_req.urls if urls_req and urls_req.urls else None
     try:
         logger.info(f"=== PROCESSING DIRECT UPLOAD ===")
-        logger.info(f"Number of files: {len(files)}")
-        if not files:
-            raise HTTPException(status_code=400, detail="No files provided")
+        logger.info(f"Number of files: {len(files) if files else 0}")
+        logger.info(f"Number of URLs: {len(urls) if urls else 0}")
+        if not files and not urls:
+            raise HTTPException(status_code=400, detail="No files or URLs provided")
         extracted_texts = []
         processed_files = []
-        for file in files:
-            logger.info(f"Processing file: {file.filename}")
-            file_ext = Path(file.filename).suffix.lower()
-            if file_ext == '.zip':
-                # Handle zip file
-                logger.info(f"Unzipping file: {file.filename}")
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_zip_file:
-                    content = await file.read()
-                    temp_zip_file.write(content)
-                    temp_zip_file_path = temp_zip_file.name
+        # Process uploaded files
+        if files:
+            for file in files:
+                logger.info(f"Processing file: {file.filename}")
+                file_ext = Path(file.filename).suffix.lower()
+                if file_ext == '.zip':
+                    # Handle zip file
+                    logger.info(f"Unzipping file: {file.filename}")
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as temp_zip_file:
+                        content = await file.read()
+                        temp_zip_file.write(content)
+                        temp_zip_file_path = temp_zip_file.name
+                    temp_paths.append(temp_zip_file_path)
+                    try:
+                        with zipfile.ZipFile(temp_zip_file_path, 'r') as zip_ref:
+                            for zip_info in zip_ref.infolist():
+                                inner_name = zip_info.filename
+                                inner_ext = Path(inner_name).suffix.lower()
+                                if inner_ext in {'.pdf', '.docx', '.doc', '.txt', '.rtf'}:
+                                    logger.info(f"Extracting and processing {inner_name} from zip")
+                                    with zip_ref.open(zip_info) as inner_file:
+                                        inner_content = inner_file.read()
+                                        with tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext) as temp_inner_file:
+                                            temp_inner_file.write(inner_content)
+                                            temp_inner_file_path = temp_inner_file.name
+                                        temp_paths.append(temp_inner_file_path)
+                                        try:
+                                            text = extract_text_from_file(temp_inner_file_path, inner_name)
+                                            logger.info(f"Extracted text length: {len(text) if text else 0}")
+                                            if text and text.strip():
+                                                extracted_texts.append(text)
+                                                processed_files.append(inner_name)
+                                                logger.info(f"Successfully processed: {inner_name}")
+                                            else:
+                                                logger.warning(f"No text extracted from {inner_name}")
+                                        except Exception as e:
+                                            logger.error(f"Error processing {inner_name}: {str(e)}", exc_info=True)
+                                        finally:
+                                            if os.path.exists(temp_inner_file_path):
+                                                os.unlink(temp_inner_file_path)
+                                else:
+                                    logger.info(f"Skipping unsupported file in zip: {inner_name}")
+                    finally:
+                        if os.path.exists(temp_zip_file_path):
+                            os.unlink(temp_zip_file_path)
+                else:
+                    if not is_valid_file_type(file.filename):
+                        logger.error(f"Unsupported file type: {file.filename}")
+                        raise HTTPException(
+                            status_code=400, 
+                            detail=f"Unsupported file type: {file.filename}"
+                        )
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as temp_file:
+                        content = await file.read()
+                        temp_file.write(content)
+                        temp_file_path = temp_file.name
+                    temp_paths.append(temp_file_path)
+                    logger.info(f"Saved temp file: {temp_file_path}, size: {len(content)} bytes")
+                    try:
+                        text = extract_text_from_file(temp_file_path, file.filename)
+                        logger.info(f"Extracted text length: {len(text) if text else 0}")
+                        if text and text.strip():
+                            extracted_texts.append(text)
+                            processed_files.append(file.filename)
+                            logger.info(f"Successfully processed: {file.filename}")
+                        else:
+                            logger.warning(f"No text extracted from {file.filename}")
+                    except Exception as e:
+                        logger.error(f"Error processing {file.filename}: {str(e)}", exc_info=True)
+                        raise HTTPException(status_code=400, detail=f"Error processing {file.filename}: {str(e)}")
+                    finally:
+                        if os.path.exists(temp_file_path):
+                            os.unlink(temp_file_path)
+        # Process URLs (Google Drive, HTTP, folders)
+        if urls:
+            for url in urls:
+                if not is_url(url):
+                    logger.warning(f"Skipping invalid URL: {url}")
+                    continue
+                logger.info(f"Processing URL: {url}")
                 try:
-                    with zipfile.ZipFile(temp_zip_file_path, 'r') as zip_ref:
-                        for zip_info in zip_ref.infolist():
-                            inner_name = zip_info.filename
-                            inner_ext = Path(inner_name).suffix.lower()
-                            if inner_ext in {'.pdf', '.docx', '.doc', '.txt', '.rtf'}:
-                                logger.info(f"Extracting and processing {inner_name} from zip")
-                                with zip_ref.open(zip_info) as inner_file:
-                                    inner_content = inner_file.read()
-                                    with tempfile.NamedTemporaryFile(delete=False, suffix=inner_ext) as temp_inner_file:
-                                        temp_inner_file.write(inner_content)
-                                        temp_inner_file_path = temp_inner_file.name
-                                    try:
-                                        text = extract_text_from_file(temp_inner_file_path, inner_name)
-                                        logger.info(f"Extracted text length: {len(text) if text else 0}")
-                                        if text and text.strip():
-                                            extracted_texts.append(text)
-                                            processed_files.append(inner_name)
-                                            logger.info(f"Successfully processed: {inner_name}")
-                                        else:
-                                            logger.warning(f"No text extracted from {inner_name}")
-                                    except Exception as e:
-                                        logger.error(f"Error processing {inner_name}: {str(e)}", exc_info=True)
-                                    finally:
-                                        if os.path.exists(temp_inner_file_path):
-                                            os.unlink(temp_inner_file_path)
-                            else:
-                                logger.info(f"Skipping unsupported file in zip: {inner_name}")
-                finally:
-                    if os.path.exists(temp_zip_file_path):
-                        os.unlink(temp_zip_file_path)
-            else:
-                if not is_valid_file_type(file.filename):
-                    logger.error(f"Unsupported file type: {file.filename}")
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"Unsupported file type: {file.filename}"
-                    )
-                with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as temp_file:
-                    content = await file.read()
-                    temp_file.write(content)
-                    temp_file_path = temp_file.name
-                logger.info(f"Saved temp file: {temp_file_path}, size: {len(content)} bytes")
-                try:
-                    text = extract_text_from_file(temp_file_path, file.filename)
-                    logger.info(f"Extracted text length: {len(text) if text else 0}")
-                    if text and text.strip():
-                        extracted_texts.append(text)
-                        processed_files.append(file.filename)
-                        logger.info(f"Successfully processed: {file.filename}")
+                    if is_gdrive_folder_link(url):
+                        # Download all files in the folder
+                        file_paths = download_gdrive_folder(extract_gdrive_folder_id(url), tempfile.gettempdir())
+                        for file_path in file_paths:
+                            temp_paths.append(file_path)
+                            file_name = os.path.basename(file_path)
+                            if not is_valid_file_type(file_name):
+                                logger.warning(f"Skipping unsupported file in GDrive folder: {file_name}")
+                                continue
+                            text = extract_text_from_file(file_path, file_name)
+                            if text and text.strip():
+                                extracted_texts.append(text)
+                                processed_files.append(file_name)
                     else:
-                        logger.warning(f"No text extracted from {file.filename}")
+                        # Download single file (GDrive file or generic URL)
+                        file_path = download_file_from_url(url, tempfile.gettempdir())
+                        temp_paths.append(file_path)
+                        file_name = os.path.basename(file_path)
+                        if not is_valid_file_type(file_name):
+                            logger.warning(f"Skipping unsupported file from URL: {file_name}")
+                            continue
+                        text = extract_text_from_file(file_path, file_name)
+                        if text and text.strip():
+                            extracted_texts.append(text)
+                            processed_files.append(file_name)
                 except Exception as e:
-                    logger.error(f"Error processing {file.filename}: {str(e)}", exc_info=True)
-                    raise HTTPException(status_code=400, detail=f"Error processing {file.filename}: {str(e)}")
-                finally:
-                    if os.path.exists(temp_file_path):
-                        os.unlink(temp_file_path)
+                    logger.error(f"Error processing URL {url}: {str(e)}", exc_info=True)
         input_docs_text = "\n".join(extracted_texts)
         if not input_docs_text.strip():
             raise HTTPException(
                 status_code=400, 
-                detail="No text could be extracted from the files. Please check if files are corrupted or in unsupported format."
+                detail="No text could be extracted from the files or URLs. Please check if files are corrupted, in unsupported format, or URLs are invalid/public."
             )
         logger.info(f"Combined extracted text length: {len(input_docs_text)} characters")
         model = initialize_model()
@@ -930,6 +978,14 @@ async def process_documents(files: List[UploadFile] = File(...)):
     except Exception as e:
         logger.error(f"Error processing documents: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    finally:
+        # Clean up all temp files downloaded
+        for path in temp_paths:
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except Exception:
+                pass
 
 @app.get("/download/{file_id}")
 async def download_file(file_id: str):
@@ -967,7 +1023,6 @@ async def download_file(file_id: str):
             file_content = f.read()
             if len(file_content) == 0:
                 raise HTTPException(status_code=500, detail="File is empty")
-        
         return FileResponse(
             path=file_path,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1056,7 +1111,7 @@ async def test_webhook():
             "test_result": "error",
             "error": str(e),
             "message": "Webhook test failed"
-        }
+    }
 
 @app.get("/")
 async def root():
@@ -1071,3 +1126,96 @@ async def root():
             "health": "/health"
         }
     }
+
+def process_urls_logic(urls: list[str]):
+    temp_paths = []
+    extracted_texts = []
+    processed_files = []
+    try:
+        if not urls:
+            raise HTTPException(status_code=400, detail="No URLs provided")
+        for url in urls:
+            if not is_url(url):
+                logger.warning(f"Skipping invalid URL: {url}")
+                continue
+            logger.info(f"Processing URL: {url}")
+            try:
+                if is_gdrive_folder_link(url):
+                    # Download all files in the folder
+                    file_paths = download_gdrive_folder(extract_gdrive_folder_id(url), tempfile.gettempdir())
+                    for file_path in file_paths:
+                        temp_paths.append(file_path)
+                        file_name = os.path.basename(file_path)
+                        if not is_valid_file_type(file_name):
+                            logger.warning(f"Skipping unsupported file in GDrive folder: {file_name}")
+                            continue
+                        text = extract_text_from_file(file_path, file_name)
+                        if text and text.strip():
+                            extracted_texts.append(text)
+                            processed_files.append(file_name)
+                else:
+                    # Download single file (GDrive file or generic URL)
+                    file_path = download_file_from_url(url, tempfile.gettempdir())
+                    temp_paths.append(file_path)
+                    file_name = os.path.basename(file_path)
+                    if not is_valid_file_type(file_name):
+                        logger.warning(f"Skipping unsupported file from URL: {file_name}")
+                        continue
+                    text = extract_text_from_file(file_path, file_name)
+                    if text and text.strip():
+                        extracted_texts.append(text)
+                        processed_files.append(file_name)
+            except Exception as e:
+                logger.error(f"Error processing URL {url}: {str(e)}", exc_info=True)
+        input_docs_text = "\n".join(extracted_texts)
+        if not input_docs_text.strip():
+            raise HTTPException(
+                status_code=400, 
+                detail="No text could be extracted from the URLs. Please check if files are corrupted, in unsupported format, or URLs are invalid/public."
+            )
+        logger.info(f"Combined extracted text length: {len(input_docs_text)} characters")
+        model = initialize_model()
+        if not model:
+            raise HTTPException(status_code=500, detail="Failed to initialize AI model")
+        try:
+            prompt = generate_quotation_prompt([], input_docs_text)
+            response_text = generate_quotation_with_retry(model, prompt)
+            if not response_text:
+                raise HTTPException(status_code=500, detail="Empty response from AI model")
+            logger.info("\n=== Raw AI Response ===")
+            logger.info(response_text)
+            try:
+                quotation_data = extract_json_from_response(response_text)
+                if not quotation_data:
+                    raise HTTPException(status_code=500, detail="Failed to parse the AI response into a valid quotation format")
+                excel_file_path = create_excel_from_quotation(quotation_data)
+                if not os.path.exists(excel_file_path):
+                    raise HTTPException(status_code=500, detail="Failed to create Excel file")
+                file_id = str(uuid.uuid4())
+                temp_files[file_id] = excel_file_path
+                return {
+                    "message": "Quotation generated successfully!",
+                    "download_url": f"/download/{file_id}",
+                    "file_id": file_id,
+                    "processed_files": processed_files,
+                    "text_length": len(input_docs_text),
+                    "extraction_strategy": "direct_parse",
+                    "needs_review": False
+                }
+            except Exception as e:
+                logger.error(f"Error parsing AI response: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error parsing AI response: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error generating quotation: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error generating quotation: {str(e)}")
+    finally:
+        for path in temp_paths:
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except Exception:
+                pass
+
+@app.post("/process-urls")
+async def process_urls(urls_req: UrlsRequest):
+    return process_urls_logic(urls_req.urls)

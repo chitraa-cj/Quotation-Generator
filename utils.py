@@ -4,6 +4,12 @@ import pandas as pd
 import os
 import re
 import logging
+import requests
+import mimetypes
+import tempfile
+import shutil
+from urllib.parse import urlparse, parse_qs
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -193,3 +199,99 @@ def clean_text(text: str) -> str:
     except Exception as e:
         logger.error(f"Error cleaning text: {str(e)}")
         return text.strip() 
+
+def is_gdrive_file_link(url: str) -> bool:
+    return (
+        'drive.google.com/file/d/' in url or
+        ('drive.google.com/open' in url and 'id=' in url)
+    )
+
+def is_gdrive_folder_link(url: str) -> bool:
+    return 'drive.google.com/drive/folders/' in url
+
+def extract_gdrive_file_id(url: str) -> str:
+    # Handles both /file/d/ and open?id= formats
+    if '/file/d/' in url:
+        return url.split('/file/d/')[1].split('/')[0]
+    elif 'open' in url and 'id=' in url:
+        return parse_qs(urlparse(url).query).get('id', [''])[0]
+    return ''
+
+def extract_gdrive_folder_id(url: str) -> str:
+    if '/folders/' in url:
+        return url.split('/folders/')[1].split('?')[0].split('/')[0]
+    return ''
+
+def download_file_from_url(url: str, dest_dir: str = None) -> str:
+    """
+    Download a file from a URL (supports Google Drive file links and generic URLs).
+    Returns the path to the downloaded file.
+    """
+    if dest_dir is None:
+        dest_dir = tempfile.gettempdir()
+    if is_gdrive_file_link(url):
+        file_id = extract_gdrive_file_id(url)
+        return download_gdrive_file(file_id, dest_dir)
+    elif is_gdrive_folder_link(url):
+        folder_id = extract_gdrive_folder_id(url)
+        return download_gdrive_folder(folder_id, dest_dir)
+    else:
+        # Generic HTTP/HTTPS download
+        local_filename = os.path.join(dest_dir, url.split('/')[-1].split('?')[0])
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(local_filename, 'wb') as f:
+                shutil.copyfileobj(r.raw, f)
+        return local_filename
+
+def download_gdrive_file(file_id: str, dest_dir: str) -> str:
+    """
+    Download a file from Google Drive using the file ID.
+    Returns the path to the downloaded file.
+    """
+    # Use the public download endpoint
+    URL = "https://drive.google.com/uc?export=download"
+    session = requests.Session()
+    response = session.get(URL, params={'id': file_id}, stream=True)
+    response.raise_for_status()
+    # Try to get filename from headers
+    filename = file_id
+    if 'Content-Disposition' in response.headers:
+        import re
+        match = re.search('filename="(.+?)"', response.headers['Content-Disposition'])
+        if match:
+            filename = match.group(1)
+    local_path = os.path.join(dest_dir, filename)
+    with open(local_path, 'wb') as f:
+        shutil.copyfileobj(response.raw, f)
+    return local_path
+
+def download_gdrive_folder(folder_id: str, dest_dir: str) -> List[str]:
+    """
+    Download all files from a public Google Drive folder using the folder ID.
+    Returns a list of file paths.
+    """
+    # Use the Google Drive API (public folders only, no auth)
+    # We'll use the "alt=media" endpoint for each file
+    # For public folders, we can scrape the folder page for file IDs
+    folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+    resp = requests.get(folder_url)
+    resp.raise_for_status()
+    # Parse file IDs from the page (look for "data-id" attributes)
+    import re
+    file_ids = re.findall(r'data-id="([\w-]{20,})"', resp.text)
+    file_paths = []
+    for file_id in set(file_ids):
+        try:
+            file_path = download_gdrive_file(file_id, dest_dir)
+            file_paths.append(file_path)
+        except Exception as e:
+            logger.error(f"Failed to download file {file_id} from folder: {e}")
+    return file_paths
+
+def is_url(s: str) -> bool:
+    try:
+        result = urlparse(s)
+        return result.scheme in ("http", "https")
+    except Exception:
+        return False 
