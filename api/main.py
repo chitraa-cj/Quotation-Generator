@@ -240,6 +240,22 @@ async def process_documents_async(
             "current_step": "text_extraction"
         })
         
+        # Detect if processed_files contains a GDrive folder link as the only file
+        if len(processed_files) == 1 and is_gdrive_folder_link(processed_files[0].get("name", "")):
+            folder_url = processed_files[0]["name"]
+            folder_id = extract_gdrive_folder_id(folder_url)
+            file_paths = download_gdrive_folder(folder_id, tempfile.gettempdir())
+            new_processed_files = []
+            for file_path in file_paths:
+                with open(file_path, "rb") as f:
+                    content_b64 = base64.b64encode(f.read()).decode("utf-8")
+                new_processed_files.append({
+                    "name": os.path.basename(file_path),
+                    "content": content_b64,
+                    "size": os.path.getsize(file_path)
+                })
+            processed_files = new_processed_files
+        
         # Process files with progress tracking
         extracted_texts = []
         processed_file_names = []
